@@ -4,6 +4,8 @@ import os
 
 import c4d
 
+from . import lib
+
 log = logging.getLogger(__name__)
 
 
@@ -536,17 +538,22 @@ def create_playblast_render_data(filepath,
     return render_data
 
 
-def create_playblast_document(doc, show_splines=False, show_nulls=False):
+def create_playblast_document(doc,
+                              show_splines=False,
+                              show_nulls=False,
+                              take=None):
     """Copy the document to render the playblast from.
 
     The viewport renderer mirrors the view it renders from, so the filters
     have to be set on the document's view as well. Rendering a copy keeps the
-    artist's document, render settings and viewport untouched.
+    artist's document, current take, render settings and viewport untouched.
 
     Args:
         doc (c4d.documents.BaseDocument): Document to copy.
         show_splines (bool): Include splines.
         show_nulls (bool): Include nulls.
+        take (Optional[c4d.modules.takesystem.BaseTake]): Take of `doc` to
+            activate in the copy. Defaults to the current take.
 
     Returns:
         c4d.documents.BaseDocument: The document copy to render.
@@ -557,6 +564,10 @@ def create_playblast_document(doc, show_splines=False, show_nulls=False):
     render_doc.SetDocumentPath(doc.GetDocumentPath())
     render_doc.SetDocumentName(doc.GetDocumentName())
 
+    camera = None
+    if take is not None:
+        camera = apply_take(render_doc, take)
+
     filters = get_display_filters("BASEDRAW_",
                                   show_splines=show_splines,
                                   show_nulls=show_nulls)
@@ -565,10 +576,42 @@ def create_playblast_document(doc, show_splines=False, show_nulls=False):
         log.debug("Document copy has no view to set display filters on.")
     for index in range(base_draw_count):
         base_draw = render_doc.GetBaseDraw(index)
-        if base_draw is not None:
-            set_node_parameters(base_draw, filters)
+        if base_draw is None:
+            continue
+        set_node_parameters(base_draw, filters)
+        # Views only pick up a take camera on redraw, so set it explicitly
+        if camera is not None:
+            base_draw.SetSceneCamera(camera)
 
     return render_doc
+
+
+def apply_take(doc, take):
+    """Activate the counterpart of `take` in a copy of its document.
+
+    Args:
+        doc (c4d.documents.BaseDocument): The document copy.
+        take (c4d.modules.takesystem.BaseTake): Take of the source document.
+
+    Returns:
+        Optional[c4d.BaseObject]: The take's camera in `doc`, if it has one.
+    """
+    doc_take = lib.find_take_in_document(take, doc)
+    if doc_take is None:
+        raise RenderError(
+            "Take not found in document copy: {0}".format(take.GetName())
+        )
+
+    take_data = doc.GetTakeData()
+    if not take_data.SetCurrentTake(doc_take):
+        raise RenderError(
+            "Failed to activate take: {0}".format(take.GetName())
+        )
+    log.debug("Activated take for playblast: %s", doc_take.GetName())
+
+    # Camera inherited from a parent take counts as well
+    result = doc_take.GetEffectiveCamera(take_data)
+    return result[0] if result else None
 
 
 def render_playblast(filepath,
@@ -580,6 +623,7 @@ def render_playblast(filepath,
                      geometry_only=True,
                      show_splines=False,
                      show_nulls=False,
+                     take=None,
                      doc=None):
     """Create a playblast of the given or active document.
 
@@ -604,6 +648,8 @@ def render_playblast(filepath,
             excluded either way.
         show_splines (bool): Include splines. Requires `geometry_only` off.
         show_nulls (bool): Include nulls. Requires `geometry_only` off.
+        take (Optional[c4d.modules.takesystem.BaseTake]): Take to render.
+            Defaults to the document's current take.
         doc (Optional[c4d.documents.BaseDocument]): Document to operate in.
             Defaults to active document if not set.
 
@@ -637,7 +683,8 @@ def render_playblast(filepath,
 
     render_doc = create_playblast_document(doc,
                                            show_splines=show_splines,
-                                           show_nulls=show_nulls)
+                                           show_nulls=show_nulls,
+                                           take=take)
     render_doc.InsertRenderData(render_data)
     # The viewport renderer reads its settings from the active render data
     render_doc.SetActiveRenderData(render_data)

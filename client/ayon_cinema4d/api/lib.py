@@ -2,6 +2,7 @@
 import contextlib
 import math
 import json
+import re
 
 import c4d
 
@@ -507,3 +508,68 @@ def set_resolution_from_entity(task_entity, doc=None):
 
         rd = rd.GetNext()
     c4d.EventAdd()
+
+
+def iter_takes(take):
+    """Yield `take`, its siblings and all child takes in Take Manager order."""
+    while take:
+        yield take
+        yield from iter_takes(take.GetDown())
+        take = take.GetNext()
+
+
+def iter_marked_takes(doc):
+    """Yield the takes marked for rendering/export in the Take Manager.
+
+    Args:
+        doc (c4d.documents.BaseDocument): Document to get the takes from.
+
+    Yields:
+        c4d.modules.takesystem.BaseTake: Marked take, Main take included.
+    """
+    take_data = doc.GetTakeData()
+    if take_data is None:
+        return
+    for take in iter_takes(take_data.GetMainTake()):
+        if take.IsChecked():
+            yield take
+
+
+def get_take_variant(take):
+    """Return the take name as a valid product variant, e.g. `Take_1`."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", take.GetName())
+
+
+def find_take_in_document(take, doc):
+    """Return the take in `doc` at the same hierarchy position as `take`.
+
+    Used to find a take in a copy of its document.
+
+    Args:
+        take (c4d.modules.takesystem.BaseTake): Take in the source document.
+        doc (c4d.documents.BaseDocument): Document to search, e.g. a copy.
+
+    Returns:
+        Optional[c4d.modules.takesystem.BaseTake]: The matching take.
+    """
+    # Sibling index per level, from the Main take down to `take`
+    path = []
+    while take.GetUp():
+        index = 0
+        pred = take.GetPred()
+        while pred:
+            index += 1
+            pred = pred.GetPred()
+        path.insert(0, index)
+        take = take.GetUp()
+
+    match = doc.GetTakeData().GetMainTake()
+    for index in path:
+        match = match.GetDown()
+        for _ in range(index):
+            if match is None:
+                break
+            match = match.GetNext()
+        if match is None:
+            return None
+    return match
