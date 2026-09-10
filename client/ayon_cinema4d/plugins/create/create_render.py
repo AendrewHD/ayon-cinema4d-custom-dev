@@ -116,8 +116,7 @@ class RenderlayerCreator(plugin.Cinema4DCreator):
                 data = self.read_take_overrides(take, data)
                 instance = CreatedInstance.from_existing(data, creator=self)
             else:
-                take_name: str = take.GetName()
-                variant = self._sanitize_take_variant_name(take_name)
+                variant = lib.get_take_variant(take)
 
                 # No existing scene instance node for this layer. Note that
                 # this instance will not have the `instance_node` data yet
@@ -168,7 +167,7 @@ class RenderlayerCreator(plugin.Cinema4DCreator):
         project_name = self.create_context.get_current_project_name()
         folder_entity = self.create_context.get_current_folder_entity()
         task_entity = self.create_context.get_current_task_entity()
-        variant = self._sanitize_take_variant_name(take.GetName())
+        variant = lib.get_take_variant(take)
 
         host_name = self.create_context.host_name
 
@@ -188,13 +187,6 @@ class RenderlayerCreator(plugin.Cinema4DCreator):
         instance_data["variant"] = variant
 
         return instance_data
-
-    def _sanitize_take_variant_name(self, variant: str) -> str:
-        # Sanitize take variant name (e.g. remove spaces)
-        # because variants and products names are not allowed to have
-        # spaces in them.
-        variant = variant.replace(" ", "_").replace("-", "_")
-        return variant
 
     def imprint_instance_node_data_overrides(self,
                                              data: dict,

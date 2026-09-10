@@ -1,4 +1,4 @@
-from ayon_core.lib import BoolDef
+from ayon_core.lib import BoolDef, UILabelDef
 from ayon_cinema4d.api import (
     lib,
     plugin
@@ -45,5 +45,28 @@ class CreateReview(plugin.Cinema4DCreator):
                     " excluded."
                 ),
                 default=False),
+            BoolDef(
+                "publishTakes",
+                label="Publish Marked Takes",
+                tooltip=(
+                    "Publish a separate review per take marked in the Take"
+                    " Manager, with the take name appended to the variant,"
+                    " e.g. 'reviewMain_Hero'. The review itself is not"
+                    " published."
+                ),
+                default=False),
+            UILabelDef(
+                self._get_marked_takes_label(),
+                tooltip="Refresh the publisher after changing take marks."),
         ])
         return defs
+
+    def _get_marked_takes_label(self):
+        """Describe the currently marked takes, refreshed with the UI."""
+        names = [
+            take.GetName()
+            for take in lib.iter_marked_takes(lib.active_document())
+        ]
+        if not names:
+            return "Marked takes: none"
+        return "Marked takes: {}".format(", ".join(names))

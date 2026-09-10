@@ -56,6 +56,8 @@ class Cinema4DExtractReview(publish.Extractor):
             geometry_only=geometry_only,
             show_splines=show_splines,
             show_nulls=show_nulls,
+            # Set by `CollectReviewTakes` when publishing marked takes
+            take=instance.data.get("take"),
             doc=doc
         )
 
