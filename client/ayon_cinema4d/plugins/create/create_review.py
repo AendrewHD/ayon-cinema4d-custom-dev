@@ -1,4 +1,4 @@
-from ayon_core.lib import BoolDef, UILabelDef
+from ayon_core.lib import BoolDef, EnumDef, UILabelDef
 from ayon_cinema4d.api import (
     lib,
     plugin
@@ -15,10 +15,30 @@ class CreateReview(plugin.Cinema4DCreator):
     product_type = product_base_type
     icon = "video-camera"
 
+    render_target = "local"
+
+    def get_publish_families(self):
+        # Shows the Deadline job options on the instance. Removed again by
+        # `CollectReviewFarm` when the review renders locally.
+        return [plugin.FARM_FAMILY]
+
     def get_instance_attr_defs(self):
         # `fps` is required by ayon-core ExtractReview
         defs = lib.collect_animation_defs(self.create_context, fps=True)
         defs.extend([
+            EnumDef(
+                "render_target",
+                label="Render Target",
+                items={
+                    "local": "Local machine rendering",
+                    "farm": "Farm rendering",
+                },
+                tooltip=(
+                    "Farm rendering renders the review with Deadline and"
+                    " publishes it in a dependent Deadline job. The farm"
+                    " workers need a GPU for the Viewport Renderer."
+                ),
+                default=self.render_target),
             BoolDef(
                 "geometryOnly",
                 label="Geometry Only",

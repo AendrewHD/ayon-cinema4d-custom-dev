@@ -19,6 +19,11 @@ from . import lib
 if typing.TYPE_CHECKING:
     from typing import Optional, List, Tuple, Union
 
+# Publish family of instances published on the farm. It is one of the
+# ayon-deadline farm families that does not get the generic Deadline publish
+# job (which would publish every product as `render`).
+FARM_FAMILY = "remote_publish_on_farm"
+
 
 def iter_instance_objects(doc):
     instance_ids = {AYON_INSTANCE_ID, AVALON_INSTANCE_ID}
@@ -118,6 +123,7 @@ class Cinema4DCreator(Creator):
         instance_data["id"] = AYON_INSTANCE_ID
         # Use the uniqueness of the node in Cinema4D as the instance id
         instance_data["instance_id"] = str(hash(instance_node))
+        self._set_publish_families(instance_data)
         product_type = instance_data.get("productType")
         if not product_type:
             product_type = self.product_base_type
@@ -146,6 +152,7 @@ class Cinema4DCreator(Creator):
                 self.identifier, []):
 
             data = self._read_instance_node(obj)
+            self._set_publish_families(data)
 
             # Add instance
             created_instance = CreatedInstance.from_existing(data, self)
@@ -154,6 +161,15 @@ class Cinema4DCreator(Creator):
             created_instance.transient_data["instance_node"] = obj
 
             self._add_instance_to_context(created_instance)
+
+    def get_publish_families(self):
+        """Return additional publish families of the created instances."""
+        return []
+
+    def _set_publish_families(self, data):
+        families = self.get_publish_families()
+        if families:
+            data["families"] = families
 
     def update_instances(self, update_list):
         for created_inst, _changes in update_list:

@@ -625,6 +625,60 @@ def apply_take(doc, take):
     return result[0] if result else None
 
 
+def create_playblast_scene(filepath,
+                           frame_start=None,
+                           frame_end=None,
+                           fps=None,
+                           width=1920,
+                           height=1080,
+                           geometry_only=True,
+                           show_splines=False,
+                           show_nulls=False,
+                           take=None,
+                           doc=None):
+    """Create the document copy a playblast is rendered from.
+
+    The copy carries its own active "AYON Review" render settings, so the
+    scene, its render settings and the artist's viewport are never changed.
+
+    Arguments match `render_playblast`.
+
+    Returns:
+        tuple[c4d.documents.BaseDocument, c4d.documents.RenderData]: The
+            document copy and its playblast render settings.
+    """
+    doc = doc or c4d.documents.GetActiveDocument()
+    doc_fps = doc.GetFps()
+    if fps is None:
+        fps = doc_fps
+    if frame_start is None:
+        frame_start = doc.GetMinTime().GetFrame(doc_fps)
+    if frame_end is None:
+        frame_end = doc.GetMaxTime().GetFrame(doc_fps)
+
+    render_data = create_playblast_render_data(
+        filepath,
+        frame_start=frame_start,
+        frame_end=frame_end,
+        fps=fps,
+        width=int(width),
+        height=int(height),
+        geometry_only=geometry_only,
+        show_splines=show_splines,
+        show_nulls=show_nulls,
+    )
+
+    render_doc = create_playblast_document(doc,
+                                           show_splines=show_splines,
+                                           show_nulls=show_nulls,
+                                           take=take)
+    render_doc.InsertRenderData(render_data)
+    # The viewport renderer reads its settings from the active render data
+    render_doc.SetActiveRenderData(render_data)
+
+    return render_doc, render_data
+
+
 def render_playblast(filepath,
                      frame_start=None,
                      frame_end=None,
@@ -667,20 +721,10 @@ def render_playblast(filepath,
     Returns:
         list[str]: The filenames of the rendered frames.
     """
-
-    doc = doc or c4d.documents.GetActiveDocument()
-    doc_fps = doc.GetFps()
-    if fps is None:
-        fps = doc_fps
-    if frame_start is None:
-        frame_start = doc.GetMinTime().GetFrame(doc_fps)
-    if frame_end is None:
-        frame_end = doc.GetMaxTime().GetFrame(doc_fps)
-
     width = int(width)
     height = int(height)
 
-    render_data = create_playblast_render_data(
+    render_doc, render_data = create_playblast_scene(
         filepath,
         frame_start=frame_start,
         frame_end=frame_end,
@@ -690,15 +734,9 @@ def render_playblast(filepath,
         geometry_only=geometry_only,
         show_splines=show_splines,
         show_nulls=show_nulls,
+        take=take,
+        doc=doc,
     )
-
-    render_doc = create_playblast_document(doc,
-                                           show_splines=show_splines,
-                                           show_nulls=show_nulls,
-                                           take=take)
-    render_doc.InsertRenderData(render_data)
-    # The viewport renderer reads its settings from the active render data
-    render_doc.SetActiveRenderData(render_data)
 
     bmp = c4d.bitmaps.BaseBitmap()
     if bmp.Init(x=width, y=height, depth=24) != c4d.IMAGERESULT_OK:
@@ -734,3 +772,95 @@ def render_playblast(filepath,
         raise RenderError("No frames were rendered to: {0}".format(filepath))
 
     return files
+
+
+def save_playblast_scene(scene_path, filepath, **kwargs):
+    """Save a playblast document copy to render on the farm.
+
+    The farm renders the saved scene with Cinema 4D Commandline, which
+    activates the take by name and renders with the take's render settings.
+    The current take therefore gets the playblast render settings as well.
+
+    Args:
+        scene_path (str): Path to save the document copy to.
+        filepath (str): Output path *without* extension, see
+            `render_playblast`.
+        **kwargs: Playblast options, see `render_playblast`.
+
+    Returns:
+        str: Name of the take the saved scene renders.
+    """
+    render_doc, render_data = create_playblast_scene(filepath, **kwargs)
+
+    take_data = render_doc.GetTakeData()
+    take = take_data.GetCurrentTake()
+    if not take.IsMain():
+        # A take's own render settings would replace the active ones
+        take.SetRenderData(take_data, render_data)
+
+    make_asset_paths_absolute(render_doc)
+
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    os.makedirs(os.path.dirname(scene_path), exist_ok=True)
+    if not c4d.documents.SaveDocument(
+        render_doc,
+        scene_path,
+        c4d.SAVEDOCUMENTFLAGS_DONTADDTORECENTLIST,
+        c4d.FORMAT_C4DEXPORT,
+    ):
+        raise RenderError(
+            "Failed to save playblast scene: {0}".format(scene_path)
+        )
+    log.debug("Saved playblast scene: %s", scene_path)
+
+    return take.GetName()
+
+
+def get_playblast_files(filepath, frame_start, frame_end):
+    """Return the frame paths a playblast renders, see `render_playblast`.
+
+    Returns:
+        list[str]: Frame paths, e.g. `<filepath>.1001.jpg`.
+    """
+    return [
+        "{0}.{1:04d}.{2}".format(filepath, frame, PLAYBLAST_EXTENSION)
+        for frame in range(int(frame_start), int(frame_end) + 1)
+    ]
+
+
+def make_asset_paths_absolute(doc):
+    """Store relative file assets of the document as absolute paths.
+
+    Relative paths resolve against the document folder, which changes when a
+    copy of the document is saved elsewhere. Assets of node materials are
+    not parameters and are left unchanged.
+
+    Args:
+        doc (c4d.documents.BaseDocument): Document with its original path.
+    """
+    assets = []
+    c4d.documents.GetAllAssetsNew(
+        doc, False, "", c4d.ASSETDATA_FLAG_NONE, assets
+    )
+    for asset in assets:
+        owner = asset.get("owner")
+        param_id = asset.get("paramId", c4d.NOTOK)
+        path = asset.get("filename")
+        if (
+            owner is None
+            or param_id == c4d.NOTOK
+            or asset.get("nodePath")
+            or not asset.get("exists")
+            or not path
+            or not os.path.isabs(path)
+        ):
+            continue
+
+        try:
+            value = owner[param_id]
+        except (AttributeError, TypeError):
+            # Parameter type not accessible from Python
+            continue
+        if isinstance(value, str) and value and not os.path.isabs(value):
+            owner[param_id] = path
+            log.debug("Made asset path absolute: %s -> %s", value, path)
