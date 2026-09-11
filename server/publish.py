@@ -22,7 +22,7 @@ class BasicEnabledStatesModel(BaseSettingsModel):
 
 
 class PublishPluginsModel(BaseSettingsModel):
-    # Frame range and resolution validators
+    # Frame range validator
     ValidateFrameRange: BasicEnabledStatesModel = SettingsField(
         default_factory=BasicEnabledStatesModel,
         title="Validate Frame Range",
@@ -30,22 +30,10 @@ class PublishPluginsModel(BaseSettingsModel):
             "Validate the publish frame range matches AYON task entity."
         )
     )
-    ValidateResolution: BasicEnabledStatesModel = SettingsField(
-        default_factory=BasicEnabledStatesModel,
-        title="Validate Resolution.",
-        description=(
-            "Validate publish resolution matches AYON task entity."
-        )
-    )
 
 
 DEFAULT_PUBLISH_SETTINGS = {
     "ValidateFrameRange": {
-        "enabled": True,
-        "optional": True,
-        "active": True,
-    },
-    "ValidateResolution": {
         "enabled": True,
         "optional": True,
         "active": True,

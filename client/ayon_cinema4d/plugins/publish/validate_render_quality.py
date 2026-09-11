@@ -1,7 +1,5 @@
 import inspect
-import re
 
-import ayon_api
 import pyblish.api
 
 from ayon_core.pipeline.publish import (
@@ -9,11 +7,7 @@ from ayon_core.pipeline.publish import (
     RepairAction,
     ValidateContentsOrder,
 )
-from ayon_core.version import __version__ as core_version
-
-# First ayon-core version integrating `versionTags`
-VERSION_TAGS_CORE_VERSION = (1, 9, 8)
-TAG_COLOR = "#5bb8f5"
+from ayon_cinema4d.api import lib
 
 
 class AddProjectTagAction(RepairAction):
@@ -25,7 +19,8 @@ class ValidateRenderQuality(pyblish.api.InstancePlugin):
     """Validate the render quality exists as tag in the project anatomy.
 
     The render quality is added to the published version as tag, AYON only
-    accepts tags defined in the project anatomy.
+    accepts tags defined in the project anatomy. `CollectApplyRenderSettings`
+    adds a missing tag automatically when the user has the rights.
     """
 
     label = "Validate Render Quality"
@@ -39,11 +34,10 @@ class ValidateRenderQuality(pyblish.api.InstancePlugin):
         if not quality:
             return
 
-        core = tuple(int(n) for n in re.findall(r"\d+", core_version)[:3])
-        if core < VERSION_TAGS_CORE_VERSION:
+        if not lib.core_supports_version_tags():
             self.log.warning(
-                f"ayon-core {core_version} doesn't write version tags, the"
-                f" render quality '{quality}' is not added to the version."
+                "ayon-core doesn't write version tags, the render quality"
+                f" '{quality}' is not added to the version."
             )
             return
 
@@ -59,11 +53,11 @@ class ValidateRenderQuality(pyblish.api.InstancePlugin):
                 f"""### Render quality tag missing
 
                 The render quality **{quality}** is added to the version as
-                tag, but the project has no tag with that name.
+                tag, but the project has no tag with that name and it could
+                not be added (project manager rights needed).
 
-                *Add Tag to Project* adds it to the project anatomy (needs
-                project manager rights), or add it in *Project Settings >
-                Anatomy > Tags*. The qualities are set in
+                Add it in *Project Settings > Anatomy > Tags* or ask a
+                project manager. The qualities are set in
                 *cinema4d/create/RenderlayerCreator*.
                 """
             ),
@@ -72,11 +66,5 @@ class ValidateRenderQuality(pyblish.api.InstancePlugin):
     @classmethod
     def repair(cls, instance):
         quality = instance.data["renderQuality"]
-        project_name = instance.context.data["projectName"]
-        tags = ayon_api.get_project(project_name).get("tags") or []
-        if quality in {tag["name"] for tag in tags}:
-            return
-        ayon_api.update_project(
-            project_name, tags=tags + [{"name": quality, "color": TAG_COLOR}]
-        )
-        cls.log.info(f"Added tag '{quality}' to project '{project_name}'.")
+        if lib.add_project_tag(instance.context.data["projectName"], quality):
+            cls.log.info(f"Added tag '{quality}' to the project.")

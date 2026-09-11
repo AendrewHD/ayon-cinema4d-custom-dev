@@ -1,15 +1,15 @@
 import inspect
 
-from ayon_core.lib import BoolDef, EnumDef, UILabelDef
+from ayon_core.lib import BoolDef, EnumDef, NumberDef, UILabelDef
 from ayon_cinema4d.api import lib, lib_renderproducts, plugin
 
 
 class RenderlayerCreator(plugin.Cinema4DCreator):
     """Render the current take or the marked takes with their render settings.
 
-    Nothing is added to the scene besides the instance node. Each rendered
-    take uses its own render settings, which are validated against the
-    frame range, frame rate and resolution of this product.
+    Nothing is added to the scene besides the instance node. Frame range,
+    frame step, frame rate, resolution and output paths of this product are
+    applied to each rendered take's render settings before rendering.
     """
 
     identifier = "io.ayon.creators.cinema4d.render"
@@ -28,6 +28,9 @@ class RenderlayerCreator(plugin.Cinema4DCreator):
     def get_instance_attr_defs(self):
         doc = lib.active_document()
         defs = lib.collect_animation_defs(self.create_context, fps=True)
+        defs.append(NumberDef(
+            "frameStep", label="Frame Step", default=1, minimum=1,
+            decimals=0, tooltip="Render every n-th frame."))
         defs.extend(lib.collect_resolution_defs(self.create_context))
 
         qualities = {
@@ -40,11 +43,7 @@ class RenderlayerCreator(plugin.Cinema4DCreator):
                 label="Render Quality",
                 items=qualities,
                 default=next(iter(qualities)),
-                tooltip=(
-                    "Added as version tag. Final renders must match the"
-                    " product settings, previews may render a part of the"
-                    " frame range, with frame steps or a scaled resolution."
-                ),
+                tooltip="Added to the published version as tag.",
             ))
 
         _take, render_data = lib.get_take_render_data(doc)

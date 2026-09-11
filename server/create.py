@@ -37,15 +37,6 @@ class RenderQualityModel(BaseSettingsModel):
         description="Version tag, must exist in the project anatomy tags",
     )
     label: str = SettingsField("", title="Label")
-    strict: bool = SettingsField(
-        True,
-        title="Strict",
-        description=(
-            "Render settings must match the product. Otherwise a part of"
-            " the frame range, frame steps and a scaled resolution only"
-            " warn."
-        ),
-    )
 
 
 class CreateRenderModel(BaseCreatePluginModel):
@@ -84,8 +75,8 @@ DEFAULT_CREATE_SETTINGS = {
         "enabled": True,
         "product_type_items": [],
         "render_qualities": [
-            {"name": "preview", "label": "Preview", "strict": False},
-            {"name": "final", "label": "Final", "strict": True},
+            {"name": "preview", "label": "Preview"},
+            {"name": "final", "label": "Final"},
         ],
     },
 }

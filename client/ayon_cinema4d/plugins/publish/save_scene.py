@@ -21,8 +21,16 @@ class SaveCurrentScene(pyblish.api.ContextPlugin):
     def process(self, context):
 
         doc: c4d.documents.BaseDocument = context.data["doc"]
+        # The farm renders the saved workfile, always save before submitting.
+        # Changed parameters (e.g. applied render settings) don't always mark
+        # the document as changed.
+        farm = any(
+            instance.data.get("farm")
+            and instance.data.get("publish") is not False
+            for instance in context
+        )
         # If file has no modifications, skip forcing a file save
-        if not doc.GetChanged():
+        if not doc.GetChanged() and not farm:
             self.log.debug("Skipping file save as there "
                            "are no unsaved changes..")
             return

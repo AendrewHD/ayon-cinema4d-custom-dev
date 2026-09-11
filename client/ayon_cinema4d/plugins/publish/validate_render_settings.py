@@ -11,20 +11,13 @@ from ayon_cinema4d.api import lib
 
 import c4d
 
-FRAME_MODE_LABELS = {
-    c4d.RDATA_FRAMESEQUENCE_MANUAL: "Manual",
-    c4d.RDATA_FRAMESEQUENCE_CURRENTFRAME: "Current Frame",
-    c4d.RDATA_FRAMESEQUENCE_ALLFRAMES: "All Frames",
-    c4d.RDATA_FRAMESEQUENCE_PREVIEWRANGE: "Preview Range",
-}
 
 class ValidateRenderSettings(pyblish.api.InstancePlugin):
     """Validate the render settings of each rendered take against the product.
 
-    Checks frame range (handles included), frame step, frame rate and
-    resolution of the take's effective render settings. Final renders must
-    match exactly. Previews may render a part of the product range, use frame
-    steps or a scaled resolution with the same aspect ratio (warnings only).
+    `CollectApplyRenderSettings` applies the product before, this catches
+    what couldn't be applied: frame range (handles included), frame step,
+    frame rate, resolution, disabled saving and missing or shared outputs.
     """
 
     label = "Validate Render Settings"
@@ -34,9 +27,7 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
     actions = [RepairAction]
 
     def process(self, instance):
-        errors, warnings = self.get_invalid(instance)
-        for message in warnings:
-            self.log.warning(message)
+        errors = self.get_invalid(instance)
         if not errors:
             return
 
@@ -56,8 +47,7 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
                 {}
 
                 *Repair* applies the product frame range, frame rate and
-                resolution to these render settings. Output paths are
-                repaired by *Validate Render Output Paths*.
+                resolution to these render settings.
                 """
             ).format(render_data.GetName(), take.GetName(), report),
         )
@@ -68,82 +58,16 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
         take = instance.data["transientData"]["take"]
         return lib.get_take_render_data(doc, take)
 
-    @staticmethod
-    def get_product_values(instance):
-        """Return the product settings the render settings must match."""
-        attrs = instance.data["creator_attributes"]
-        return {
-            "frame_start": int(attrs["frameStart"] - attrs["handleStart"]),
-            "frame_end": int(attrs["frameEnd"] + attrs["handleEnd"]),
-            "fps": float(attrs["fps"]),
-            "width": int(attrs["resolutionWidth"]),
-            "height": int(attrs["resolutionHeight"]),
-            "pixel_aspect": float(attrs["pixelAspect"]),
-        }
-
     @classmethod
     def get_invalid(cls, instance):
-        """Return error and warning messages."""
-        doc = instance.context.data["doc"]
+        """Return error messages."""
         _take, render_data = cls.get_render_data(instance)
-        product = cls.get_product_values(instance)
-        strict = instance.data.get("renderQualityStrict", True)
-        errors, warnings = [], []
-        # Allowed deviations of previews are warnings
-        relaxed = errors if strict else warnings
-
-        # Frame range, handles included
-        start, end = product["frame_start"], product["frame_end"]
-        render_range = lib.get_render_frame_range(doc, render_data)
-        if render_range is None:
-            errors.append(
-                "Frame range 'Custom' is not supported, use Manual,"
-                " All Frames or Preview Range."
-            )
-        elif render_range != (start, end):
-            mode = FRAME_MODE_LABELS.get(
-                render_data[c4d.RDATA_FRAMESEQUENCE], ""
-            )
-            message = "Frame range {}-{} ({}) doesn't match {}-{}.".format(
-                *render_range, mode, start, end
-            )
-            inside = start <= render_range[0] <= render_range[1] <= end
-            (relaxed if inside else errors).append(message)
-
-        step = int(render_data[c4d.RDATA_FRAMESTEP])
-        if step != 1:
-            relaxed.append(f"Frame step is {step}, not 1.")
-
-        # Frame rate of the render settings and the document
-        fps = product["fps"]
-        render_fps = float(render_data[c4d.RDATA_FRAMERATE])
-        if abs(render_fps - fps) > 0.001:
-            errors.append(f"Frame rate {render_fps:g} doesn't match {fps:g}.")
-        doc_fps = lib.get_document_fps(fps)
-        if doc.GetFps() != doc_fps:
-            errors.append(
-                f"Project frame rate {doc.GetFps()} doesn't match {doc_fps}."
-            )
-
-        # Resolution
-        width = int(round(render_data[c4d.RDATA_XRES]))
-        height = int(round(render_data[c4d.RDATA_YRES]))
-        if (width, height) != (product["width"], product["height"]):
-            message = "Resolution {}x{} doesn't match {}x{}.".format(
-                width, height, product["width"], product["height"]
-            )
-            same_aspect = abs(
-                width / height - product["width"] / product["height"]
-            ) < 0.01
-            (relaxed if same_aspect else errors).append(message)
-
-        pixel_aspect = float(render_data[c4d.RDATA_PIXELASPECT])
-        if abs(pixel_aspect - product["pixel_aspect"]) > 0.001:
-            errors.append("Pixel aspect {:g} doesn't match {:g}.".format(
-                pixel_aspect, product["pixel_aspect"]
-            ))
-        if render_data[c4d.RDATA_RENDERREGION]:
-            errors.append("Render Region is enabled.")
+        errors = lib.apply_render_product(
+            instance.context.data["doc"],
+            render_data,
+            lib.get_render_product(instance.data["creator_attributes"]),
+            dry_run=True,
+        )
 
         # Nothing would be written to disk
         saves = (
@@ -156,8 +80,7 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
                 " Multi-Pass image."
             )
         errors.extend(cls.get_invalid_outputs(instance))
-
-        return errors, warnings
+        return errors
 
     @staticmethod
     def get_invalid_outputs(instance):
@@ -198,20 +121,11 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
 
     @classmethod
     def repair(cls, instance):
-        doc = instance.context.data["doc"]
         _take, render_data = cls.get_render_data(instance)
-        product = cls.get_product_values(instance)
-
-        doc.SetFps(lib.get_document_fps(product["fps"]))
-        lib.set_render_frame_range(render_data,
-                                   product["frame_start"],
-                                   product["frame_end"],
-                                   product["fps"])
-        render_data[c4d.RDATA_FRAMESTEP] = 1
-        lib.set_render_resolution(render_data,
-                                  product["width"],
-                                  product["height"],
-                                  product["pixel_aspect"])
-        render_data[c4d.RDATA_RENDERREGION] = False
+        lib.apply_render_product(
+            instance.context.data["doc"],
+            render_data,
+            lib.get_render_product(instance.data["creator_attributes"]),
+        )
         c4d.EventAdd()
         cls.log.info(f"Applied product settings to: {render_data.GetName()}")
