@@ -4,12 +4,17 @@ import math
 import json
 import re
 
+import ayon_api
 import c4d
 
 from ayon_core.lib import NumberDef
+from ayon_core.version import __version__ as core_version
 
 AYON_CONTAINERS = "AYON_CONTAINERS"
 JSON_PREFIX = "JSON::"
+# First ayon-core version integrating `versionTags`
+VERSION_TAGS_CORE_VERSION = (1, 9, 8)
+TAG_COLOR = "#5bb8f5"
 
 
 def collect_animation_defs(create_context, fps=False):
@@ -673,3 +678,119 @@ def get_marked_takes_label(doc):
     if not names:
         return "Marked takes: none"
     return "Marked takes: {}".format(", ".join(names))
+
+
+FRAME_MODE_LABELS = {
+    c4d.RDATA_FRAMESEQUENCE_MANUAL: "Manual",
+    c4d.RDATA_FRAMESEQUENCE_CURRENTFRAME: "Current Frame",
+    c4d.RDATA_FRAMESEQUENCE_ALLFRAMES: "All Frames",
+    c4d.RDATA_FRAMESEQUENCE_PREVIEWRANGE: "Preview Range",
+}
+
+
+def get_render_product(creator_attributes):
+    """Return the render product settings from the instance attributes.
+
+    Returns:
+        dict: Frame range including handles, frame step, fps, resolution
+            and pixel aspect.
+    """
+    attrs = creator_attributes
+    return {
+        "frame_start": int(attrs["frameStart"]) - int(attrs["handleStart"]),
+        "frame_end": int(attrs["frameEnd"]) + int(attrs["handleEnd"]),
+        "frame_step": max(int(attrs.get("frameStep", 1)), 1),
+        "fps": float(attrs["fps"]),
+        "width": int(attrs["resolutionWidth"]),
+        "height": int(attrs["resolutionHeight"]),
+        "pixel_aspect": float(attrs["pixelAspect"]),
+    }
+
+
+def apply_render_product(doc, render_data, product, dry_run=False):
+    """Apply the render product frame and format settings to render settings.
+
+    Args:
+        doc (c4d.documents.BaseDocument): Document of the render settings.
+        render_data (c4d.documents.RenderData): Render settings to change.
+        product (dict): Settings from `get_render_product`.
+        dry_run (bool): Only report the differences.
+
+    Returns:
+        list[str]: The differences, e.g. "Resolution 500x500 -> 1920x1920".
+    """
+    changes = []
+    fps = product["fps"]
+    doc_fps = get_document_fps(fps)
+    if doc.GetFps() != doc_fps:
+        changes.append(f"Project frame rate {doc.GetFps()} -> {doc_fps}")
+        if not dry_run:
+            doc.SetFps(doc_fps)
+
+    # Frame range, handles included, in Manual mode
+    expected = (product["frame_start"], product["frame_end"])
+    current = get_render_frame_range(doc, render_data)
+    render_fps = float(render_data[c4d.RDATA_FRAMERATE])
+    if current != expected:
+        mode = FRAME_MODE_LABELS.get(
+            render_data[c4d.RDATA_FRAMESEQUENCE], "Custom"
+        )
+        if current:
+            mode = "{}-{} {}".format(*current, mode)
+        changes.append("Frame range ({}) -> {}-{}".format(mode, *expected))
+    if abs(render_fps - fps) > 0.001:
+        changes.append(f"Frame rate {render_fps:g} -> {fps:g}")
+    if not dry_run and (current != expected or abs(render_fps - fps) > 0.001):
+        set_render_frame_range(render_data, *expected, fps)
+
+    step = int(render_data[c4d.RDATA_FRAMESTEP])
+    if step != product["frame_step"]:
+        changes.append(f"Frame step {step} -> {product['frame_step']}")
+        if not dry_run:
+            render_data[c4d.RDATA_FRAMESTEP] = product["frame_step"]
+
+    size = (int(round(render_data[c4d.RDATA_XRES])),
+            int(round(render_data[c4d.RDATA_YRES])))
+    pixel_aspect = float(render_data[c4d.RDATA_PIXELASPECT])
+    if size != (product["width"], product["height"]):
+        changes.append("Resolution {}x{} -> {}x{}".format(
+            *size, product["width"], product["height"]
+        ))
+    if abs(pixel_aspect - product["pixel_aspect"]) > 0.001:
+        changes.append(
+            f"Pixel aspect {pixel_aspect:g} -> {product['pixel_aspect']:g}"
+        )
+    if not dry_run and (
+        size != (product["width"], product["height"])
+        or abs(pixel_aspect - product["pixel_aspect"]) > 0.001
+    ):
+        set_render_resolution(render_data, product["width"],
+                              product["height"], product["pixel_aspect"])
+
+    if render_data[c4d.RDATA_RENDERREGION]:
+        changes.append("Render Region on -> off")
+        if not dry_run:
+            render_data[c4d.RDATA_RENDERREGION] = False
+
+    return changes
+
+
+def core_supports_version_tags():
+    """Return whether ayon-core integrates `versionTags`."""
+    version = tuple(int(n) for n in re.findall(r"\d+", core_version)[:3])
+    return version >= VERSION_TAGS_CORE_VERSION
+
+
+def add_project_tag(project_name, tag_name):
+    """Add a tag to the project anatomy, needs project manager rights.
+
+    Returns:
+        bool: Whether the tag was added, False if it already existed.
+    """
+    tags = ayon_api.get_project(project_name).get("tags") or []
+    if tag_name in {tag["name"] for tag in tags}:
+        return False
+    ayon_api.update_project(
+        project_name, tags=tags + [{"name": tag_name, "color": TAG_COLOR}]
+    )
+    return True

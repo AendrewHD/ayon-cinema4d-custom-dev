@@ -30,9 +30,14 @@ RENDER_NAME_FORMAT = c4d.RDATA_NAMEFORMAT_6
 # Render qualities (version tags) when the settings don't define them.
 # Settings: cinema4d/create/RenderlayerCreator/render_qualities
 DEFAULT_RENDER_QUALITIES = [
-    {"name": "preview", "label": "Preview", "strict": False},
-    {"name": "final", "label": "Final", "strict": True},
+    {"name": "preview", "label": "Preview"},
+    {"name": "final", "label": "Final"},
 ]
+
+OUTPUT_LABELS = {
+    c4d.RDATA_PATH: "Regular Image path",
+    c4d.RDATA_MULTIPASS_FILENAME: "Multi-Pass Image path",
+}
 # ARNOLD_RENDER_ENGINE_ID = 1029988
 
 
@@ -533,3 +538,40 @@ def get_render_output_paths(doc, render_data, project_settings=None):
         c4d.RDATA_PATH: _path(settings["image_prefix"]),
         c4d.RDATA_MULTIPASS_FILENAME: _path(multipass_prefix),
     }
+
+
+def apply_render_output_paths(doc, render_data, project_settings=None,
+                              dry_run=False):
+    """Apply the pipeline output paths and file name format.
+
+    Only saved outputs (Regular / Multi-Pass image) are compared, both paths
+    are set when anything differs.
+
+    Returns:
+        list[str]: The differences, e.g. "Regular Image path a -> b".
+    """
+    expected = get_render_output_paths(doc, render_data, project_settings)
+    changes = []
+    for param_id, save_id in (
+        (c4d.RDATA_PATH, c4d.RDATA_SAVEIMAGE),
+        (c4d.RDATA_MULTIPASS_FILENAME, c4d.RDATA_MULTIPASS_SAVEIMAGE),
+    ):
+        path = render_data[param_id] or ""
+        if render_data[save_id] and (
+            _normalize_path(path) != _normalize_path(expected[param_id])
+        ):
+            changes.append("{} '{}' -> '{}'".format(
+                OUTPUT_LABELS[param_id], path, expected[param_id]
+            ))
+    if render_data[c4d.RDATA_NAMEFORMAT] != RENDER_NAME_FORMAT:
+        changes.append("File name format -> Name.0000.ext")
+
+    if changes and not dry_run:
+        for param_id, path in expected.items():
+            render_data[param_id] = path
+        render_data[c4d.RDATA_NAMEFORMAT] = RENDER_NAME_FORMAT
+    return changes
+
+
+def _normalize_path(path):
+    return os.path.normcase(os.path.normpath(path)) if path else ""

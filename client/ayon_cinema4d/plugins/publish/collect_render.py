@@ -56,7 +56,6 @@ class CollectCinema4DRender(
         version = context.data.get("version")
         project_entity = context.data["projectEntity"]
         doc: c4d.documents.BaseDocument = context.data["doc"]
-        qualities = self.get_render_qualities(context)
 
         scene_ocio_config = lib_renderproducts.get_scene_ocio_config(doc)
         self.log.debug(f"Scene OCIO Config: '{scene_ocio_config['config']}'")
@@ -105,7 +104,7 @@ class CollectCinema4DRender(
             product_name = inst.data["productName"]
             render_target = attrs.get("render_target", "farm")
 
-            self.collect_render_quality(inst, attrs, qualities)
+            self.collect_render_quality(inst, attrs)
             step = max(int(render_data[c4d.RDATA_FRAMESTEP]), 1)
             if step > 1:
                 # Integrate would renumber the frames without gaps otherwise
@@ -182,29 +181,12 @@ class CollectCinema4DRender(
                 )
             })
 
-    def get_render_qualities(self, context):
-        """Return the render quality settings by name."""
-        settings = (
-            context.data["project_settings"]
-            .get("cinema4d", {})
-            .get("create", {})
-            .get("RenderlayerCreator", {})
-        )
-        # Same fallback as the creator when the settings have no qualities
-        items = settings.get(
-            "render_qualities", lib_renderproducts.DEFAULT_RENDER_QUALITIES
-        )
-        return {item["name"]: item for item in items}
-
-    def collect_render_quality(self, instance, attrs, qualities):
+    def collect_render_quality(self, instance, attrs):
         """Store the render quality and add it as version tag."""
         quality = attrs.get("render_quality")
         if not quality:
             return
-        # Unknown qualities are validated strictly
-        strict = qualities.get(quality, {}).get("strict", True)
         instance.data["renderQuality"] = quality
-        instance.data["renderQualityStrict"] = strict
 
         tags = list(instance.data.get("versionTags") or [])
         if quality not in tags:
