@@ -24,6 +24,8 @@ class Cinema4DRenderInstance(publish.RenderInstance):
     frameEndHandle: int = attr.ib(default=None)
     renderData: c4d.documents.RenderData = attr.ib(default=None)
     sceneRenderColorspace: Optional[str] = attr.ib(default=None)
+    # farm, local or local_no_render
+    renderTarget: str = attr.ib(default="farm")
 
     # Required for Submit Publish Job
     renderProducts: lib_renderproducts.ARenderProduct = attr.ib(default=None)
@@ -36,15 +38,12 @@ class CollectCinema4DRender(
     publish.AbstractCollectRender,
     publish.ColormanagedPyblishPluginMixin
 ):
-    """
-    Each active render instance represents a `Take` inside Cinema4D. For this
-    take we will get its render settings and will compute the applicable
-    frame range and expected output files as well.
+    """Collect the render of the current take or a marked take.
 
-    Each take in Cinema4D can have its own "Render Settings" overrides.
-    As such each take may have its own "Render Data" and "Video Post"
-    as a result it can have different frame ranges, renderer, etc.
-    and also different output filepath settings.
+    Each render instance renders one take with the take's effective render
+    settings (a take may override the render settings of its parent). The
+    rendered frame range, frame step and resolution come from those render
+    settings, see `ValidateRenderSettings` for the check against the product.
     See: https://developers.maxon.net/docs/Cinema4DCPPSDK/page_overview_takesystem.html  # noqa
     """
     order = pyblish.api.CollectorOrder + 0.1
@@ -57,7 +56,7 @@ class CollectCinema4DRender(
         version = context.data.get("version")
         project_entity = context.data["projectEntity"]
         doc: c4d.documents.BaseDocument = context.data["doc"]
-        take_data = doc.GetTakeData()
+        qualities = self.get_render_qualities(context)
 
         scene_ocio_config = lib_renderproducts.get_scene_ocio_config(doc)
         self.log.debug(f"Scene OCIO Config: '{scene_ocio_config['config']}'")
@@ -71,6 +70,9 @@ class CollectCinema4DRender(
         for inst in context:
             if not inst.data.get("active", True):
                 continue
+            # Source of marked takes, see `CollectMarkedTakes`
+            if inst.data.get("publish") is False:
+                continue
 
             product_type = inst.data["productType"]
             product_base_type = inst.data.get("productBaseType")
@@ -79,27 +81,35 @@ class CollectCinema4DRender(
             if product_base_type != "render":
                 continue
 
-            # Get take from instance
-            take: c4d.modules.takesystem.BaseTake = (
-                inst.data["transientData"]["take"]
+            # Marked take or the current take
+            take, render_data = lib.get_take_render_data(
+                doc, inst.data.get("take")
             )
-            render_data, base_take = take.GetEffectiveRenderData(take_data)
+            inst.data.setdefault("transientData", {})["take"] = take
+            attrs = inst.data.get("creator_attributes", {})
 
-            # Get take name, resolution, frame range
-            fps: float = doc.GetFps()
-            resolution_width: int = int(render_data[c4d.RDATA_XRES])
-            resolution_height: int = int(render_data[c4d.RDATA_YRES])
-            pixel_aspect: float = float(render_data[c4d.RDATA_PIXELASPECT])
-            frame_start: int = int(
-                render_data[c4d.RDATA_FRAMEFROM].GetFrame(fps)
+            # Frames rendered by the render settings, the product range for
+            # custom frames (reported by `ValidateRenderSettings`)
+            product_start = int(attrs.get("frameStart", 1001))
+            product_end = int(attrs.get("frameEnd", product_start))
+            render_range = lib.get_render_frame_range(doc, render_data) or (
+                product_start - int(attrs.get("handleStart", 0)),
+                product_end + int(attrs.get("handleEnd", 0)),
             )
-            frame_end: int = int(
-                render_data[c4d.RDATA_FRAMETO].GetFrame(fps)
-            )
-            step: int = int(render_data[c4d.RDATA_FRAMESTEP])
+            render_start, render_end = render_range
+            # Product range clamped to the render range, the rest are handles
+            frame_start = min(max(render_start, product_start), render_end)
+            frame_end = max(min(render_end, product_end), frame_start)
 
             instance_families = inst.data.get("families", [])
             product_name = inst.data["productName"]
+            render_target = attrs.get("render_target", "farm")
+
+            self.collect_render_quality(inst, attrs, qualities)
+            step = max(int(render_data[c4d.RDATA_FRAMESTEP]), 1)
+            if step > 1:
+                # Integrate would renumber the frames without gaps otherwise
+                inst.data["hasExplicitFrames"] = True
 
             instance = Cinema4DRenderInstance(
                 productType=product_type,
@@ -117,26 +127,25 @@ class CollectCinema4DRender(
                 setMembers="",
                 publish=True,
                 name=product_name,
-                resolutionWidth=resolution_width,
-                resolutionHeight=resolution_height,
-                pixelAspect=pixel_aspect,
+                resolutionWidth=int(render_data[c4d.RDATA_XRES]),
+                resolutionHeight=int(render_data[c4d.RDATA_YRES]),
+                pixelAspect=float(render_data[c4d.RDATA_PIXELASPECT]),
                 review="review" in instance_families,
                 frameStart=frame_start,
                 frameEnd=frame_end,
-                # TODO: define sensible way to set "handles" for a take
-                handleStart=0,
-                handleEnd=0,
-                frameStartHandle=frame_start,
-                frameEndHandle=frame_end,
+                handleStart=frame_start - render_start,
+                handleEnd=render_end - frame_end,
+                frameStartHandle=render_start,
+                frameEndHandle=render_end,
                 frameStep=step,
-                fps=fps,
+                fps=float(attrs.get("fps") or doc.GetFps()),
                 publish_attributes=inst.data.get("publish_attributes", {}),
                 # The source instance this render instance replaces
                 source_instance=inst,
 
                 renderProducts=lib_renderproducts.ARenderProduct(
-                    frame_start=frame_start,
-                    frame_end=frame_end
+                    frame_start=render_start,
+                    frame_end=render_end
                 ),
 
                 # Required for submit publish job
@@ -147,12 +156,60 @@ class CollectCinema4DRender(
                 sceneRenderColorspace=scene_ocio_config["colorspace"],
             )
 
-            instance.farm = True
+            instance.farm = render_target == "farm"
+            instance.renderTarget = render_target
             instance.projectEntity = project_entity
             instance.deadline = inst.data.get("deadline")
             instances.append(instance)
 
+            self.log.debug(
+                f"Take '{take.GetName()}' renders '{render_data.GetName()}'"
+                f" {render_start}-{render_end} ({render_target})"
+            )
+
+        self._render_instances = instances
         return instances
+
+    def post_collecting_action(self):
+        # The base class takes the context frame range and handles when the
+        # product range equals the context range with handles. Keep ours.
+        for render_instance in self._render_instances:
+            render_instance.source_instance.data.update({
+                key: getattr(render_instance, key)
+                for key in (
+                    "frameStart", "frameEnd", "handleStart", "handleEnd",
+                    "frameStartHandle", "frameEndHandle",
+                )
+            })
+
+    def get_render_qualities(self, context):
+        """Return the render quality settings by name."""
+        settings = (
+            context.data["project_settings"]
+            .get("cinema4d", {})
+            .get("create", {})
+            .get("RenderlayerCreator", {})
+        )
+        # Same fallback as the creator when the settings have no qualities
+        items = settings.get(
+            "render_qualities", lib_renderproducts.DEFAULT_RENDER_QUALITIES
+        )
+        return {item["name"]: item for item in items}
+
+    def collect_render_quality(self, instance, attrs, qualities):
+        """Store the render quality and add it as version tag."""
+        quality = attrs.get("render_quality")
+        if not quality:
+            return
+        # Unknown qualities are validated strictly
+        strict = qualities.get(quality, {}).get("strict", True)
+        instance.data["renderQuality"] = quality
+        instance.data["renderQualityStrict"] = strict
+
+        tags = list(instance.data.get("versionTags") or [])
+        if quality not in tags:
+            tags.append(quality)
+        instance.data["versionTags"] = tags
 
     def get_expected_files(self, render_instance: Cinema4DRenderInstance):
         """Return expected output files from the render"""
@@ -189,8 +246,9 @@ class CollectCinema4DRender(
         )
 
         # Debug log video posts
-        video_posts: list[c4d.documents.BaseVideoPost] = lib.get_siblings(
-            render_data.GetFirstVideoPost()
+        first_video_post = render_data.GetFirstVideoPost()
+        video_posts: list[c4d.documents.BaseVideoPost] = (
+            lib.get_siblings(first_video_post) if first_video_post else []
         )
         video_posts_names = ", ".join(vp.GetName() for vp in video_posts)
         self.log.debug(f"  Video posts: {video_posts_names}")
@@ -210,6 +268,7 @@ class CollectCinema4DRender(
             for frame in range(
                 render_instance.frameStartHandle,
                 render_instance.frameEndHandle + 1,
+                render_instance.frameStep,
             ):
                 resolved_path = lib_renderproducts.resolve_filepath(
                     token_path,
@@ -244,12 +303,11 @@ class CollectCinema4DRender(
         # Multi-Pass image
         save_multipass_image: bool = render_data[c4d.RDATA_MULTIPASS_SAVEIMAGE]
         if save_multipass_image:
-            products.update(
-                self._collect_multipass(
-                    render_data,
-                    files_resolver
-                )
-            )
+            multipass = self._collect_multipass(render_data, files_resolver)
+            # Multi-layer file next to the regular image is its own product
+            if "" in products and "" in multipass:
+                multipass["multipass"] = multipass.pop("")
+            products.update(multipass)
 
         # Set output dir from the beauty output because it is required for
         # publish metadata to be written out and the publish job submission
@@ -262,7 +320,9 @@ class CollectCinema4DRender(
             )
         else:
             render_instance.outputDir = None
-            self.log.warning("No render outputs collected; outputDir set to None.")
+            self.log.warning(
+                "No render outputs collected; outputDir set to None."
+            )
 
         # Debug log all collected sequences
         for aov_name, aov_files in products.items():

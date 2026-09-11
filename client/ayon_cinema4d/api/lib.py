@@ -19,7 +19,6 @@ def collect_animation_defs(create_context, fps=False):
         create_context (CreateContext): The context of publisher will be
             used to define the defaults for the attributes to use the current
             context's entity frame range as default values.
-        step (bool): Whether to include `step` attribute definition.
         fps (bool): Whether to include `fps` attribute definition.
 
     Returns:
@@ -58,14 +57,42 @@ def collect_animation_defs(create_context, fps=False):
     ]
 
     if fps:
-        doc = active_document()
-        current_fps = doc.GetFps()
+        # Task fps, the document fps is an integer in Cinema 4D
+        default_fps = attrib.get("fps") or active_document().GetFps()
         fps_def = NumberDef(
-            "fps", label="FPS", default=current_fps, decimals=5
+            "fps", label="FPS", default=float(default_fps), decimals=5
         )
         defs.append(fps_def)
 
     return defs
+
+
+def collect_resolution_defs(create_context):
+    """Get the resolution attribute definitions, defaults from the task.
+
+    Returns:
+        List[NumberDef]: Width, height and pixel aspect definitions.
+    """
+    attrib: dict = create_context.get_current_task_entity()["attrib"]
+    return [
+        NumberDef("resolutionWidth",
+                  label="Resolution Width",
+                  default=int(attrib["resolutionWidth"]),
+                  decimals=0,
+                  minimum=1,
+                  maximum=65535),
+        NumberDef("resolutionHeight",
+                  label="Resolution Height",
+                  default=int(attrib["resolutionHeight"]),
+                  decimals=0,
+                  minimum=1,
+                  maximum=65535),
+        NumberDef("pixelAspect",
+                  label="Pixel Aspect",
+                  default=float(attrib["pixelAspect"]),
+                  decimals=4,
+                  minimum=0.01),
+    ]
 
 
 def get_main_window():
@@ -435,8 +462,13 @@ def get_materials_from_objects(objects):
     return materials
 
 
+def get_document_fps(fps):
+    """Return the integer document fps used for a (fractional) fps."""
+    return int(math.ceil(fps))
+
+
 def set_frame_range_from_entity(task_entity, doc=None):
-    """Set scene FPS adn resolution from task entity"""
+    """Set scene fps and frame range from task entity"""
     if doc is None:
         doc = active_document()
     attrib = task_entity["attrib"]
@@ -446,7 +478,7 @@ def set_frame_range_from_entity(task_entity, doc=None):
     handle_end = int(attrib["handleEnd"])
 
     f_fps = float(attrib["fps"])
-    i_fps = int(math.ceil(attrib["fps"]))
+    i_fps = get_document_fps(f_fps)
     frame_start = int(attrib["frameStart"]) - handle_start
     frame_end = int(attrib["frameEnd"]) + handle_end
     bt_frame_start = c4d.BaseTime(frame_start, i_fps)
@@ -462,13 +494,8 @@ def set_frame_range_from_entity(task_entity, doc=None):
     doc.SetLoopMaxTime(bt_frame_end)
 
     rd = doc.GetFirstRenderData()
-
     while rd:
-        # set render fps
-        rd[c4d.RDATA_FRAMERATE] = f_fps
-        # set render frame range
-        rd[c4d.RDATA_FRAMEFROM] = bt_frame_start
-        rd[c4d.RDATA_FRAMETO] = bt_frame_end
+        set_render_frame_range(rd, frame_start, frame_end, f_fps)
         rd = rd.GetNext()
 
     c4d.EventAdd()
@@ -480,34 +507,99 @@ def set_resolution_from_entity(task_entity, doc=None):
         doc = active_document()
 
     attrib = task_entity["attrib"]
-    width: int = int(attrib["resolutionWidth"])
-    height: int = int(attrib["resolutionHeight"])
-    pixel_aspect: float = attrib["pixelAspect"]
-
-    @contextlib.contextmanager
-    def _unlocked_ratio(render_data):
-        """Temporarily unlock the ratio of the render resolution."""
-        original = render_data[c4d.RDATA_LOCKRATIO]
-        render_data[c4d.RDATA_LOCKRATIO] = False
-        try:
-            yield
-        finally:
-            render_data[c4d.RDATA_LOCKRATIO] = original
-
     rd = doc.GetFirstRenderData()
     while rd:
-        # Fix #20: Set the virtual resolution with user interaction so Redshift
-        # still triggers some additional checks on the attribute change.
-        with _unlocked_ratio(rd):
-            flag = c4d.DESCFLAGS_SET_USERINTERACTION
-            rd.SetParameter(c4d.RDATA_XRES_VIRTUAL, width, flag)
-            rd.SetParameter(c4d.RDATA_YRES_VIRTUAL, height, flag)
-
-        # Set pixel aspect ratio
-        rd[c4d.RDATA_PIXELASPECT] = pixel_aspect
-
+        set_render_resolution(rd,
+                              attrib["resolutionWidth"],
+                              attrib["resolutionHeight"],
+                              attrib["pixelAspect"])
         rd = rd.GetNext()
     c4d.EventAdd()
+
+
+def get_take_render_data(doc, take=None):
+    """Return a take and the render settings it renders with.
+
+    Args:
+        doc (c4d.documents.BaseDocument): Document of the take.
+        take (Optional[c4d.modules.takesystem.BaseTake]): Take, defaults to
+            the current take.
+
+    Returns:
+        tuple[BaseTake, c4d.documents.RenderData]: Take and its effective
+            render settings (inherited from parent takes).
+    """
+    take_data = doc.GetTakeData()
+    if take is None:
+        take = take_data.GetCurrentTake()
+    result = take.GetEffectiveRenderData(take_data)
+    render_data = result[0] if result else doc.GetActiveRenderData()
+    return take, render_data
+
+
+def get_render_frame_range(doc, render_data):
+    """Return the frame range the render settings render.
+
+    Resolves the Frame Range mode (Manual, Current Frame, All Frames,
+    Preview Range) of the render settings.
+
+    Returns:
+        Optional[tuple[int, int]]: Start and end frame, None for Custom
+            frames which have no continuous range.
+    """
+    mode = render_data[c4d.RDATA_FRAMESEQUENCE]
+    if mode == c4d.RDATA_FRAMESEQUENCE_MANUAL:
+        times = (render_data[c4d.RDATA_FRAMEFROM],
+                 render_data[c4d.RDATA_FRAMETO])
+    elif mode == c4d.RDATA_FRAMESEQUENCE_CURRENTFRAME:
+        times = (doc.GetTime(), doc.GetTime())
+    elif mode == c4d.RDATA_FRAMESEQUENCE_ALLFRAMES:
+        times = (doc.GetMinTime(), doc.GetMaxTime())
+    elif mode == c4d.RDATA_FRAMESEQUENCE_PREVIEWRANGE:
+        times = (doc.GetLoopMinTime(), doc.GetLoopMaxTime())
+    else:
+        return None
+    fps = doc.GetFps()
+    return int(times[0].GetFrame(fps)), int(times[1].GetFrame(fps))
+
+
+def set_render_frame_range(render_data, frame_start, frame_end, fps):
+    """Set a manual frame range and frame rate on render settings.
+
+    Args:
+        render_data (c4d.documents.RenderData): Render settings.
+        frame_start (int): Start frame, handles included.
+        frame_end (int): End frame, handles included.
+        fps (float): Frame rate.
+    """
+    doc_fps = get_document_fps(fps)
+    render_data[c4d.RDATA_FRAMESEQUENCE] = c4d.RDATA_FRAMESEQUENCE_MANUAL
+    render_data[c4d.RDATA_FRAMEFROM] = c4d.BaseTime(int(frame_start), doc_fps)
+    render_data[c4d.RDATA_FRAMETO] = c4d.BaseTime(int(frame_end), doc_fps)
+    render_data[c4d.RDATA_FRAMERATE] = float(fps)
+
+
+@contextlib.contextmanager
+def unlocked_ratio(render_data):
+    """Temporarily unlock the ratio of the render resolution."""
+    original = render_data[c4d.RDATA_LOCKRATIO]
+    render_data[c4d.RDATA_LOCKRATIO] = False
+    try:
+        yield
+    finally:
+        render_data[c4d.RDATA_LOCKRATIO] = original
+
+
+def set_render_resolution(render_data, width, height, pixel_aspect):
+    """Set resolution and pixel aspect on render settings."""
+    # Fix #20: Set the virtual resolution with user interaction so Redshift
+    # still triggers some additional checks on the attribute change.
+    with unlocked_ratio(render_data):
+        flag = c4d.DESCFLAGS_SET_USERINTERACTION
+        render_data.SetParameter(c4d.RDATA_XRES_VIRTUAL, float(width), flag)
+        render_data.SetParameter(c4d.RDATA_YRES_VIRTUAL, float(height), flag)
+
+    render_data[c4d.RDATA_PIXELASPECT] = float(pixel_aspect)
 
 
 def iter_takes(take):
@@ -573,3 +665,11 @@ def find_take_in_document(take, doc):
         if match is None:
             return None
     return match
+
+
+def get_marked_takes_label(doc):
+    """Return a UI label listing the marked takes of the document."""
+    names = [take.GetName() for take in iter_marked_takes(doc)]
+    if not names:
+        return "Marked takes: none"
+    return "Marked takes: {}".format(", ".join(names))

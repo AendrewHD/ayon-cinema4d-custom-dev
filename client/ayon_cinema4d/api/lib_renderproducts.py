@@ -3,6 +3,7 @@ from typing import Any, Optional, Generator
 import logging
 import os
 import copy
+import re
 
 import attr
 
@@ -14,6 +15,24 @@ from . import lib
 log = logging.getLogger(__name__)
 
 REDSHIFT_RENDER_ENGINE_ID = 1036219
+
+# Render output paths, relative to the workfile folder. Overridden by
+# settings: cinema4d/render_settings
+DEFAULT_RENDER_SETTINGS = {
+    "render_folder": "renders/cinema4d",
+    "image_prefix": "$prj/$take/$take",
+    "multipass_prefix": "$prj/$take/$pass/$take_$pass",
+    "multilayer_prefix": "$prj/$take/$take_multipass",
+}
+# Name.0000.ext, frame numbers after a dot are required by the publish
+RENDER_NAME_FORMAT = c4d.RDATA_NAMEFORMAT_6
+
+# Render qualities (version tags) when the settings don't define them.
+# Settings: cinema4d/create/RenderlayerCreator/render_qualities
+DEFAULT_RENDER_QUALITIES = [
+    {"name": "preview", "label": "Preview", "strict": False},
+    {"name": "final", "label": "Final", "strict": True},
+]
 # ARNOLD_RENDER_ENGINE_ID = 1029988
 
 
@@ -123,7 +142,9 @@ def resolve_filepath(
 
     resolved = c4d.modules.tokensystem.StringConvertTokens(token_path, rpd)
     for value, placeholder in placeholders.items():
-        resolved = resolved.replace(placeholder, value)
+        # Pass tokens are lowercased by Cinema 4D, so is the placeholder
+        resolved = re.sub(re.escape(placeholder), lambda _: value, resolved,
+                          flags=re.IGNORECASE)
     return resolved
 
 
@@ -475,4 +496,40 @@ def get_scene_ocio_config(
         "display": display,
         "view": view,
         "colorspace": colorspace
+    }
+
+
+def get_render_output_paths(doc, render_data, project_settings=None):
+    """Return the pipeline output paths for render settings.
+
+    Paths are absolute: the farm renders a published copy of the workfile,
+    relative paths would resolve next to that copy. Tokens keep the paths
+    unique per workfile ($prj) and take ($take).
+
+    Args:
+        doc (c4d.documents.BaseDocument): Document of the render settings.
+        render_data (c4d.documents.RenderData): Render settings, the
+            Multi-Layer File option selects the Multi-Pass prefix.
+        project_settings (Optional[dict]): Project settings.
+
+    Returns:
+        dict[int, str]: Output path by parameter id (`RDATA_PATH`,
+            `RDATA_MULTIPASS_FILENAME`).
+    """
+    settings = dict(DEFAULT_RENDER_SETTINGS)
+    settings.update(
+        (project_settings or {}).get("cinema4d", {}).get("render_settings")
+        or {}
+    )
+    folder = os.path.join(doc.GetDocumentPath(), settings["render_folder"])
+    multipass_prefix = settings["multipass_prefix"]
+    if render_data[c4d.RDATA_MULTIPASS_SAVEONEFILE]:
+        multipass_prefix = settings["multilayer_prefix"]
+
+    def _path(prefix):
+        return os.path.normpath(os.path.join(folder, prefix))
+
+    return {
+        c4d.RDATA_PATH: _path(settings["image_prefix"]),
+        c4d.RDATA_MULTIPASS_FILENAME: _path(multipass_prefix),
     }

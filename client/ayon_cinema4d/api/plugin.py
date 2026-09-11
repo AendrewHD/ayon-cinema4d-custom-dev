@@ -11,6 +11,7 @@ from ayon_core.pipeline import (
     AVALON_INSTANCE_ID
 )
 from ayon_core.lib import BoolDef
+from ayon_core.lib.profiles_filtering import filter_profiles
 
 from ayon_cinema4d.api import pipeline
 
@@ -23,6 +24,10 @@ if typing.TYPE_CHECKING:
 # ayon-deadline farm families that does not get the generic Deadline publish
 # job (which would publish every product as `render`).
 FARM_FAMILY = "remote_publish_on_farm"
+
+# Family of the per AOV instances of a local render. Not `render`, the
+# ayon-deadline Cinema4D submitter would process them.
+LOCAL_RENDER_FAMILY = "render.local.c4d"
 
 
 def iter_instance_objects(doc):
@@ -106,6 +111,8 @@ class Cinema4DCreator(Creator):
     default_variants = ["Main"]
     settings_category = "cinema4d"
     skip_discovery = True
+    # Deadline 'Frames Per Task' of new instances, None keeps the profile
+    default_chunk_size = None
 
     def create(self, product_name, instance_data, pre_create_data):
 
@@ -124,6 +131,7 @@ class Cinema4DCreator(Creator):
         # Use the uniqueness of the node in Cinema4D as the instance id
         instance_data["instance_id"] = str(hash(instance_node))
         self._set_publish_families(instance_data)
+        self._set_default_chunk_size(instance_data)
         product_type = instance_data.get("productType")
         if not product_type:
             product_type = self.product_base_type
@@ -170,6 +178,37 @@ class Cinema4DCreator(Creator):
         families = self.get_publish_families()
         if families:
             data["families"] = families
+
+    def _set_default_chunk_size(self, data):
+        """Set the initial Deadline 'Frames Per Task' of a new instance.
+
+        Only when the ayon-deadline job info profile lets artists change it,
+        a hidden profile value is kept.
+        """
+        if self.default_chunk_size is None:
+            return
+        profile = self._get_deadline_job_profile(data)
+        if "chunk_size" not in (profile or {}).get("overrides", []):
+            return
+        publish_attributes = data.setdefault("publish_attributes", {})
+        job_info = publish_attributes.setdefault("CollectJobInfo", {})
+        job_info.setdefault("chunk_size", self.default_chunk_size)
+
+    def _get_deadline_job_profile(self, data):
+        """Return the ayon-deadline `CollectJobInfo` profile of an instance."""
+        settings = (self.project_settings or {}).get("deadline")
+        if not settings:
+            return None
+        profiles = settings["publish"]["CollectJobInfo"]["profiles"]
+        task_entity = self.create_context.get_task_entity(
+            data.get("folderPath"), data.get("task")
+        )
+        return filter_profiles(profiles, {
+            "host_names": self.create_context.host_name,
+            "task_types": task_entity["taskType"] if task_entity else None,
+            "task_names": task_entity["name"] if task_entity else None,
+            "product_base_types": self.product_base_type,
+        })
 
     def update_instances(self, update_list):
         for created_inst, _changes in update_list:

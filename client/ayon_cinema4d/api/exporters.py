@@ -618,7 +618,7 @@ def apply_take(doc, take):
         raise RenderError(
             "Failed to activate take: {0}".format(take.GetName())
         )
-    log.debug("Activated take for playblast: %s", doc_take.GetName())
+    log.debug("Activated take in document copy: %s", doc_take.GetName())
 
     # Camera inherited from a parent take counts as well
     result = doc_take.GetEffectiveCamera(take_data)
@@ -772,6 +772,55 @@ def render_playblast(filepath,
         raise RenderError("No frames were rendered to: {0}".format(filepath))
 
     return files
+
+
+def render_take(doc, take=None):
+    """Render a take with its render settings, like Render to Picture Viewer.
+
+    A copy of the document is rendered, so the artist's current take stays.
+    The render settings save the frames and passes to their output paths.
+
+    Args:
+        doc (c4d.documents.BaseDocument): Document to render.
+        take (Optional[c4d.modules.takesystem.BaseTake]): Take of `doc`,
+            defaults to the current take.
+
+    Returns:
+        c4d.documents.RenderData: The render settings used, of the copy.
+    """
+    render_doc = doc.GetClone(c4d.COPYFLAGS_DOCUMENT)
+    # Keep the document location so relative paths keep resolving
+    render_doc.SetDocumentPath(doc.GetDocumentPath())
+    render_doc.SetDocumentName(doc.GetDocumentName())
+    if take is not None:
+        camera = apply_take(render_doc, take)
+        # Views only pick up a take camera on redraw, so set it explicitly
+        base_draw = render_doc.GetRenderBaseDraw()
+        if camera is not None and base_draw is not None:
+            base_draw.SetSceneCamera(camera)
+
+    _take, render_data = lib.get_take_render_data(render_doc)
+    render_doc.SetActiveRenderData(render_data)
+
+    width = int(render_data[c4d.RDATA_XRES])
+    height = int(render_data[c4d.RDATA_YRES])
+    bmp = c4d.bitmaps.MultipassBitmap(width, height, c4d.COLORMODE_RGB)
+    if bmp is None:
+        raise RenderError("Could not create the render bitmap.")
+
+    result = c4d.documents.RenderDocument(
+        render_doc,
+        render_data.GetDataInstance(),
+        bmp,
+        c4d.RENDERFLAGS_EXTERNAL | c4d.RENDERFLAGS_NODOCUMENTCLONE,
+    )
+    if result != c4d.RENDERRESULT_OK:
+        raise RenderError(
+            "Failed to render '{0}'. (error code: {1})".format(
+                render_data.GetName(), result
+            )
+        )
+    return render_data
 
 
 def save_playblast_scene(scene_path, filepath, **kwargs):
