@@ -16,6 +16,7 @@ class CreateReview(plugin.Cinema4DCreator):
     icon = "video-camera"
 
     render_target = "local"
+    default_chunk_size = 10
 
     def get_publish_families(self):
         # Shows the Deadline job options on the instance. Removed again by
@@ -76,17 +77,7 @@ class CreateReview(plugin.Cinema4DCreator):
                 ),
                 default=False),
             UILabelDef(
-                self._get_marked_takes_label(),
+                lib.get_marked_takes_label(lib.active_document()),
                 tooltip="Refresh the publisher after changing take marks."),
         ])
         return defs
-
-    def _get_marked_takes_label(self):
-        """Describe the currently marked takes, refreshed with the UI."""
-        names = [
-            take.GetName()
-            for take in lib.iter_marked_takes(lib.active_document())
-        ]
-        if not names:
-            return "Marked takes: none"
-        return "Marked takes: {}".format(", ".join(names))
