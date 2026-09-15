@@ -16,8 +16,6 @@ class ValidateFrameRange(
     This is an optional validator checking if the frame range on instance
     matches the frame range specified for the asset.
 
-    It also validates render frame ranges of render layers.
-
     Repair action will change everything to match the asset frame range.
 
     This can be turned off by the artist to allow custom ranges.
@@ -25,7 +23,8 @@ class ValidateFrameRange(
 
     label = "Validate Frame Range"
     order = ValidateContentsOrder
-    families = ["camera", "pointcache", "redshiftproxy", "render", "review"]
+    # Render instances: `ValidateRenderSettings`
+    families = ["camera", "pointcache", "redshiftproxy", "review"]
     optional = True
     actions = [RepairAction]
 

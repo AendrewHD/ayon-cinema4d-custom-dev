@@ -11,7 +11,9 @@ from .lib import (
 )
 from .lib_renderproducts import (
     find_video_post,
+    get_render_output_paths,
     REDSHIFT_RENDER_ENGINE_ID,
+    RENDER_NAME_FORMAT,
     set_scene_ocio_config
 )
 import c4d
@@ -79,11 +81,6 @@ def reset_render_settings():
     # Set renderer to Redshift
     render_data[c4d.RDATA_RENDERENGINE] = REDSHIFT_RENDER_ENGINE_ID
 
-    # Set output filepaths
-    # Render relatively to the scene
-    render_path: str = "./renders/cinema4d/$prj/$take/$pass"
-    render_data[c4d.RDATA_MULTIPASS_FILENAME] = render_path
-
     # Save only multipass
     render_data[c4d.RDATA_SAVEIMAGE] = False  # do not save regular image
     render_data[c4d.RDATA_MULTIPASS_SAVEIMAGE] = True  # save multipass
@@ -94,6 +91,14 @@ def reset_render_settings():
 
     # Set EXR file format
     render_data[c4d.RDATA_MULTIPASS_SAVEFORMAT] = c4d.FILTER_EXR
+
+    # Pipeline output paths, see `ValidateRenderOutputPaths`
+    paths = get_render_output_paths(
+        doc, render_data, get_current_project_settings()
+    )
+    for param_id, path in paths.items():
+        render_data[param_id] = path
+    render_data[c4d.RDATA_NAMEFORMAT] = RENDER_NAME_FORMAT
 
     # Trigger update
     c4d.EventAdd()
