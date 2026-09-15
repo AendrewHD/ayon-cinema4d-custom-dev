@@ -3,19 +3,19 @@ import pyblish.api
 from ayon_cinema4d.api import lib
 
 
-class CollectReviewTakes(pyblish.api.InstancePlugin):
-    """Split a review into one instance per marked take.
+class CollectMarkedTakes(pyblish.api.InstancePlugin):
+    """Split a review or render into one instance per marked take.
 
-    With 'Publish Marked Takes' enabled, every take marked in the Take Manager
-    is published as its own product with the take name appended to the
-    variant, e.g. `reviewMain_Hero`. The source review is not published.
+    With 'Publish/Render Marked Takes' enabled, every take marked in the Take
+    Manager is published as its own product with the take name appended to
+    the variant, e.g. `reviewMain_Hero`. The source instance is not published.
     """
 
     label = "Collect Marked Takes"
     # After `CollectInstances`, before core collects product versions
     order = pyblish.api.CollectorOrder - 0.39
     hosts = ["cinema4d"]
-    families = ["review"]
+    families = ["review", "render"]
 
     def process(self, instance):
         if not instance.data.get("publishTakes") or "take" in instance.data:
@@ -23,7 +23,7 @@ class CollectReviewTakes(pyblish.api.InstancePlugin):
 
         takes = list(lib.iter_marked_takes(instance.context.data["doc"]))
         if not takes:
-            # Reported by `ValidateReviewTakes`
+            # Reported by `ValidateMarkedTakes`
             return
 
         for take in takes:
@@ -69,6 +69,9 @@ class CollectReviewTakes(pyblish.api.InstancePlugin):
             "productGroup": instance.data["productName"],
             "instance_id": take_instance.id,
             "take": take,
+            # The ayon-deadline Cinema4D submitter reads the take from here
+            "transientData": dict(instance.data.get("transientData", {}),
+                                  take=take),
         })
         return take_instance
 

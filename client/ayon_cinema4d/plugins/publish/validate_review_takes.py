@@ -9,17 +9,18 @@ from ayon_core.pipeline.publish import (
 from ayon_cinema4d.api import lib
 
 
-class ValidateReviewTakes(pyblish.api.InstancePlugin):
-    """Validate takes are marked when 'Publish Marked Takes' is enabled.
+class ValidateMarkedTakes(pyblish.api.InstancePlugin):
+    """Validate takes are marked when marked takes are published.
 
     Without a marked take there is nothing to publish per take, and silently
-    publishing the review instead would not be what the artist asked for.
+    publishing the current take instead would not be what the artist asked
+    for.
     """
 
     label = "Validate Marked Takes"
     order = ValidateContentsOrder
     hosts = ["cinema4d"]
-    families = ["review"]
+    families = ["review", "render"]
 
     def process(self, instance):
         if not instance.data.get("publishTakes") or "take" in instance.data:
@@ -28,18 +29,21 @@ class ValidateReviewTakes(pyblish.api.InstancePlugin):
         if any(lib.iter_marked_takes(instance.context.data["doc"])):
             return
 
+        option = "Publish Marked Takes"
+        if instance.data.get("productBaseType") == "render":
+            option = "Render Marked Takes"
         raise PublishValidationError(
-            "'Publish Marked Takes' is enabled but no take is marked.",
+            f"'{option}' is enabled but no take is marked.",
             title="No marked takes",
             description=inspect.cleandoc(
-                """### No marked takes
+                f"""### No marked takes
 
-                The review has **Publish Marked Takes** enabled, but no take
-                is marked in the Take Manager.
+                **{option}** is enabled, but no take is marked in the
+                Take Manager.
 
                 Mark the takes to publish (checkbox next to the take name)
-                and refresh the publisher, or disable **Publish Marked Takes**
-                to publish the review from the current take.
+                and refresh the publisher, or disable **{option}** to
+                publish the current take.
                 """
             ),
         )
