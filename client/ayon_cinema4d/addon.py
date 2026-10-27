@@ -6,6 +6,34 @@ from .version import __version__
 CINEMA4D_ADDON_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
+def get_config_module_paths(app):
+    """Return `g_additionalModulePath` entries from Cinema 4D's `config.txt`.
+
+    The file lives in `<install>/resource/config.txt`. On macOS the
+    executable sits inside the app bundle, hence the parent folder search.
+    """
+    executable = app.find_executable()
+    if not executable:
+        return []
+
+    folder = os.path.dirname(str(executable))
+    for _ in range(4):
+        config_path = os.path.join(folder, "resource", "config.txt")
+        if os.path.isfile(config_path):
+            break
+        folder = os.path.dirname(folder)
+    else:
+        return []
+
+    paths = []
+    with open(config_path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            key, sep, value = line.strip().partition("=")
+            if sep and key.strip().lower() == "g_additionalmodulepath":
+                paths.extend(p.strip() for p in value.split(";"))
+    return [p for p in paths if p]
+
+
 class Cinema4DAddon(AYONAddon, IHostAddon):
     name = "cinema4d"
     version = __version__
@@ -31,8 +59,12 @@ class Cinema4DAddon(AYONAddon, IHostAddon):
         if os.name == "nt":
             path_key = path_key.upper()
 
+        # The environment variable replaces `g_additionalModulePath` from
+        # the application's `config.txt`, so its paths are carried over.
         old_g_module_path = env.get(path_key) or ""
-        for path in old_g_module_path.split(os.pathsep):
+        paths = old_g_module_path.split(os.pathsep)
+        paths.extend(get_config_module_paths(app))
+        for path in paths:
             if not path:
                 continue
 
