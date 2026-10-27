@@ -9,6 +9,9 @@ class CollectMarkedTakes(pyblish.api.InstancePlugin):
     With 'Publish/Render Marked Takes' enabled, every take marked in the Take
     Manager is published as its own product with the take name appended to
     the variant, e.g. `reviewMain_Hero`. The source instance is not published.
+
+    Without it the current take is published; unless it is the Main take its
+    name is appended the same way.
     """
 
     label = "Collect Marked Takes"
@@ -18,10 +21,15 @@ class CollectMarkedTakes(pyblish.api.InstancePlugin):
     families = ["review", "render"]
 
     def process(self, instance):
-        if not instance.data.get("publishTakes") or "take" in instance.data:
+        if "take" in instance.data:
             return
 
-        takes = list(lib.iter_marked_takes(instance.context.data["doc"]))
+        doc = instance.context.data["doc"]
+        if not instance.data.get("publishTakes"):
+            self.collect_current_take(instance, doc)
+            return
+
+        takes = list(lib.iter_marked_takes(doc))
         if not takes:
             # Reported by `ValidateMarkedTakes`
             return
@@ -35,7 +43,22 @@ class CollectMarkedTakes(pyblish.api.InstancePlugin):
         # Only the take products are published
         instance.data["publish"] = False
 
-    def create_take_instance(self, instance, take):
+    def collect_current_take(self, instance, doc):
+        """Name the instance after the current take, unless it is Main."""
+        take_data = doc.GetTakeData()
+        take = take_data.GetCurrentTake() if take_data else None
+        if take is None or take.IsMain():
+            return
+
+        source_name = instance.data["productName"]
+        instance.data.update(self.get_take_data(instance, take))
+        instance.data["productGroup"] = source_name
+        self.log.debug(
+            f"Collected current take '{take.GetName()}' as: {instance}"
+        )
+
+    def get_take_data(self, instance, take):
+        """Return the instance data that names a product after `take`."""
         take_variant = lib.get_take_variant(take)
         variant = "{}_{}".format(instance.data["variant"], take_variant)
         product_name = (
@@ -43,6 +66,28 @@ class CollectMarkedTakes(pyblish.api.InstancePlugin):
             # Default product name template `{productType}{Variant}`
             or "{}_{}".format(instance.data["productName"], take_variant)
         )
+
+        label = "{} ({})".format(product_name, instance.data["folderPath"])
+        if "frameStartHandle" in instance.data:
+            label += "  [{}-{}]".format(
+                int(instance.data["frameStartHandle"]),
+                int(instance.data["frameEndHandle"]),
+            )
+
+        return {
+            "name": product_name,
+            "label": label,
+            "variant": variant,
+            "productName": product_name,
+            "take": take,
+            # The ayon-deadline Cinema4D submitter reads the take from here
+            "transientData": dict(instance.data.get("transientData", {}),
+                                  take=take),
+        }
+
+    def create_take_instance(self, instance, take):
+        take_data = self.get_take_data(instance, take)
+        product_name = take_data["productName"]
 
         take_instance = instance.context.create_instance(product_name)
         take_instance[:] = instance[:]
@@ -53,25 +98,11 @@ class CollectMarkedTakes(pyblish.api.InstancePlugin):
                 value = value.copy()
             take_instance.data[key] = value
 
-        label = "{} ({})".format(product_name, instance.data["folderPath"])
-        if "frameStartHandle" in instance.data:
-            label += "  [{}-{}]".format(
-                int(instance.data["frameStartHandle"]),
-                int(instance.data["frameEndHandle"]),
-            )
-
+        take_instance.data.update(take_data)
         take_instance.data.update({
-            "name": product_name,
-            "label": label,
-            "variant": variant,
-            "productName": product_name,
             # Group the take products under the source product
             "productGroup": instance.data["productName"],
             "instance_id": take_instance.id,
-            "take": take,
-            # The ayon-deadline Cinema4D submitter reads the take from here
-            "transientData": dict(instance.data.get("transientData", {}),
-                                  take=take),
         })
         return take_instance
 
