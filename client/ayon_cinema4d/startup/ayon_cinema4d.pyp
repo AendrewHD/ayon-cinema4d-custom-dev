@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 
 # For whatever reason Cinema4D does not add `PYTHONPATH` to `sys.path`
 # It also seems that e.g. `C4DPYTHONPATH310` does not do that either?
@@ -51,6 +52,12 @@ from ayon_cinema4d.api.commands import (
     reset_render_settings
 )  # noqa: E402
 from ayon_core.tools.utils import host_tools  # noqa: E402
+from ayon_core.lib import is_headless_mode_enabled  # noqa: E402
+from ayon_cinema4d.api import doc_context  # noqa: E402
+from ayon_cinema4d.api import publish_status  # noqa: E402
+from ayon_cinema4d.api import browser_drag  # noqa: E402
+
+log = logging.getLogger("ayon_cinema4d")
 
 
 AYON_LOAD_ID = 1064311
@@ -66,6 +73,11 @@ AYON_RESET_RENDER_SETTINGS_ID = 1064316
 AYON_EXPERIMENTAL_TOOLS_ID = 1064319
 
 AYON_CONTEXT_LABEL_ID = 1064692
+
+# TODO: replace with ids registered at https://developers.maxon.net/forum/pid
+# 1000001-1000010 are Maxon's ids for plug-ins in development.
+AYON_DOCUMENT_WATCHER_ID = 1000001
+AYON_PUBLISH_STATUS_ID = 1000002
 
 
 def get_icon_by_name(name):
@@ -104,10 +116,11 @@ class Loader(c4d.plugins.CommandData):
     icon = get_icon_bitmap_by_name("loader")
 
     def Execute(self, doc):
-        host_tools.show_loader(
+        window = host_tools.show_loader(
             parent=get_main_window(),
             use_context=True
         )
+        browser_drag.install(window)
         return True
 
 
@@ -145,10 +158,11 @@ class Library(c4d.plugins.CommandData):
         # The library loader is now the regular Loader, which lists library
         # projects in its project dropdown. `show_tool_by_name` still routes
         # "libraryloader" there, and only logs a warning if it ever goes away.
-        host_tools.show_tool_by_name(
+        window = host_tools.show_tool_by_name(
             "libraryloader",
             parent=get_main_window()
         )
+        browser_drag.install(window)
         return True
 
 
@@ -162,6 +176,18 @@ class Workfiles(c4d.plugins.CommandData):
             parent=get_main_window()
         )
         return True
+
+
+class PublishStatus(c4d.plugins.CommandData):
+    id = AYON_PUBLISH_STATUS_ID
+    label = "Publish Status..."
+    icon = get_icon_bitmap_by_name("circle_green")
+
+    def Execute(self, doc):
+        return publish_status.open_dialog(self.id)
+
+    def RestoreLayout(self, sec_ref):
+        return publish_status.restore_dialog(self.id, sec_ref)
 
 
 class ResetFrameRange(c4d.plugins.CommandData):
@@ -222,6 +248,47 @@ class ContextLabel(c4d.plugins.CommandData):
     icon = get_ayon_icon_bitmap()
 
 
+class DocumentWatcher(c4d.plugins.MessageData):
+    """Switch the AYON context when another document becomes active."""
+
+    def __init__(self):
+        self._doc = None
+        self._path = None
+
+    def CoreMessage(self, id, bc):
+        if id != c4d.EVMSG_CHANGE:
+            return True
+
+        doc = c4d.documents.GetActiveDocument()
+        path = doc_context.get_document_path(doc)
+        try:
+            same_doc = doc == self._doc
+        except ReferenceError:  # previous document was closed
+            same_doc = False
+        if same_doc and path == self._path:
+            return True
+
+        self._doc, self._path = doc, path
+        try:
+            doc_context.sync_context_to_document(doc)
+        except Exception:
+            log.warning("Switching the AYON context failed", exc_info=True)
+        publish_status.refresh()
+        return True
+
+
+def is_commandline():
+    """Commandline / Team Render client, no interactive documents."""
+    no_gui = {
+        getattr(c4d, name, None)
+        for name in ("VERSIONTYPE_COMMANDLINE",
+                     "VERSIONTYPE_TEAMRENDER_CLIENT",
+                     "VERSIONTYPE_TEAMRENDER_SERVER")
+    }
+    no_gui.discard(None)
+    return c4d.GeGetVersionType() in no_gui
+
+
 def install_menu():
     """Register the AYON menu with Cinema4D"""
     main_menu = c4d.gui.GetMenuResource("M_EDITOR")
@@ -248,6 +315,7 @@ def install_menu():
     add_command(menu, Publish)
     add_command(menu, Manage)
     add_command(menu, Library)
+    add_command(menu, PublishStatus)
     menu.InsData(menuresource_separator, True)
     add_command(menu, Workfiles)
     menu.InsData(menuresource_separator, True)
@@ -293,6 +361,7 @@ if __name__ == '__main__':
         Publish,
         Manage,
         Library,
+        PublishStatus,
         Workfiles,
         ResetFrameRange,
         ResetSceneResolution,
@@ -308,4 +377,13 @@ if __name__ == '__main__':
             icon=getattr(command_plugin, "icon", None),
             help=getattr(command_plugin, "help", None),
             dat=command_plugin()
+        )
+
+    # No context switching for command line / farm renders
+    if not is_headless_mode_enabled() and not is_commandline():
+        c4d.plugins.RegisterMessagePlugin(
+            id=AYON_DOCUMENT_WATCHER_ID,
+            str="AYON Document Watcher",
+            info=0,
+            dat=DocumentWatcher()
         )

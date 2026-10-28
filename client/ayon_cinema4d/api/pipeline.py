@@ -26,7 +26,7 @@ from .workio import (
 )
 import ayon_cinema4d
 
-from . import lib, plugin
+from . import lib, plugin, doc_context
 
 log = logging.getLogger("ayon_cinema4d")
 
@@ -77,6 +77,15 @@ class Cinema4DHost(HostBase, IWorkfileHost, ILoadHost, IPublishHost):
 
     def get_containers(self):
         return iter_containers()
+
+    # Remember the task each document belongs to (see `doc_context`)
+    def _after_workfile_open(self, open_workfile_context):
+        super()._after_workfile_open(open_workfile_context)
+        _store_document_context(open_workfile_context)
+
+    def _after_workfile_save(self, save_workfile_context):
+        super()._after_workfile_save(save_workfile_context)
+        _store_document_context(save_workfile_context)
 
     @contextlib.contextmanager
     def maintained_selection(self):
@@ -270,6 +279,25 @@ def imprint_container(
     lib.imprint(container, data, group="AYON")
 
 
+def _store_document_context(workfile_context):
+    doc_context.set_document_context(
+        lib.active_document(),
+        workfile_context.project_name,
+        workfile_context.folder_entity["path"],
+        workfile_context.task_entity["name"],
+    )
+
+
+def _reset_visible_publisher():
+    """Publisher shows the old context until it is reset."""
+    from ayon_core.tools.utils import host_tools
+
+    helper = host_tools._SingletonPoint.helper
+    window = getattr(helper, "_publisher_tool", None)
+    if window is not None and window.isVisible():
+        window.reset()
+
+
 def on_task_changed():
 
     if not is_headless_mode_enabled():
@@ -279,3 +307,5 @@ def on_task_changed():
         ayon_context.SetName(
             "{}, {}".format(get_current_folder_path(), get_current_task_name())
         )
+        c4d.gui.UpdateMenus()
+        _reset_visible_publisher()

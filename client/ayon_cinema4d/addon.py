@@ -52,6 +52,10 @@ class Cinema4DAddon(AYONAddon, IHostAddon, IPluginPaths):
             os.path.join(CINEMA4D_ADDON_ROOT, "plugins", "publish_shared")
         ]
 
+    def get_loader_action_plugin_paths(self, host_name=None):
+        """Generic Loader / Browser actions, also in the tray Loader."""
+        return [os.path.join(CINEMA4D_ADDON_ROOT, "plugins", "load_actions")]
+
     def get_launch_hook_paths(self, app):
         if app.host_name != self.host_name:
             return []
