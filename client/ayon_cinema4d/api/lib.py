@@ -953,18 +953,3 @@ def get_xref_namespace(context, doc):
     while f"{namespace}_{number}" in taken:
         number += 1
     return f"{namespace}_{number}"
-
-
-def set_xref_separator(xref, separator=XREF_SEPARATOR):
-    """Set the namespace separator (default '::') if Cinema 4D exposes it.
-
-    It is an XRef option, not a documented parameter: look it up in the
-    description by symbol. Returns True when it was set.
-    """
-    description = xref.GetDescription(c4d.DESCFLAGS_DESC_NONE)
-    for bc, desc_id, _ in description:
-        ident = bc[c4d.DESC_IDENT] or ""
-        if "XREF" in ident and "SEPARATOR" in ident:
-            return xref.SetParameter(
-                desc_id, separator, c4d.DESCFLAGS_SET_USERINTERACTION)
-    return False

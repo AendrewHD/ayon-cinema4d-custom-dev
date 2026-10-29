@@ -39,7 +39,6 @@ class XRefLoader(plugin.Cinema4DLoader):
             str(namespace),
             c4d.DESCFLAGS_SET_USERINTERACTION
         )
-        lib.set_xref_separator(xref)  # stays '::' when not exposed
         c4d.EventAdd()
         # c4d.ID_CA_XREF_FILE       # filepath
         # c4d.ID_CA_XREF_NAMESPACE  # namespace
