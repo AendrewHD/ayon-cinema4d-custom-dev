@@ -21,6 +21,19 @@ _PALETTE = [
 _bitmaps = {}
 
 
+def ui_color(name, fallback):
+    """Cinema 4D interface color id by name, `fallback` Vector if missing."""
+    return getattr(c4d, name, None) or fallback
+
+
+TEXT = ui_color("COLOR_TEXT", c4d.Vector(0.85))
+TEXT_DIM = ui_color("COLOR_TEXT_DISABLED", c4d.Vector(0.5))
+TEXT_SELECTED = ui_color("COLOR_TEXT_SELECTED", c4d.Vector(1.0))
+SELECTION = c4d.Vector(0.22, 0.40, 0.58)
+CARD = c4d.Vector(0.20)
+LINE = c4d.Vector(0.14)
+
+
 def color_for(name):
     """Stable palette color for a name (product type, folder type...)."""
     digest = hashlib.md5((name or "").encode("utf-8")).digest()

@@ -327,13 +327,13 @@ class TreeModel(c4d.gui.TreeViewFunctions):
             return
 
         if selected:
-            text_color = c4d.COLOR_TEXT_SELECTED
+            text_color = widgets.TEXT_SELECTED
         elif color is not None:
             text_color = color
         elif obj.dim:
-            text_color = c4d.COLOR_TEXT_DISABLED
+            text_color = widgets.TEXT_DIM
         else:
-            text_color = c4d.COLOR_TEXT
+            text_color = widgets.TEXT
         area.DrawSetTextCol(text_color, c4d.COLOR_TRANS)
         area.DrawText(
             widgets.elide(area, text, width - PADDING), x + PADDING // 2,
