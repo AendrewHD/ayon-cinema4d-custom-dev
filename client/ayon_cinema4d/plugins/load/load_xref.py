@@ -57,10 +57,8 @@ class XRefLoader(plugin.Cinema4DLoader):
 
     def update(self, container, context):
         filepath = self.filepath_from_context(context)
-        container_node = container["node"]
-
         # There should be only 1 xref node
-        for xref in lib.get_objects_from_container(container_node):
+        for xref in pipeline.get_container_objects(container["node"]):
             if xref.GetTypeName() == "XRef":
                 # This requires `c4d.DESCFLAGS_SET_USERINTERACTION`
                 # which will unfortunately prompt the user to confirm it.
@@ -72,18 +70,5 @@ class XRefLoader(plugin.Cinema4DLoader):
                     c4d.DESCFLAGS_SET_USERINTERACTION,
                 )
 
-        # Update the representation id
-        for i, base_container in container_node.GetUserDataContainer():
-            if base_container[c4d.DESC_NAME] == "representation":
-                container_node[i] = context["representation"]["id"]
-                break
-
-        c4d.EventAdd()
-
-    def remove(self, container):
-        """Remove all sub containers"""
-        container_node = container["node"]
-        for obj in lib.get_objects_from_container(container_node):
-            obj.Remove()
-        container_node.Remove()
+        pipeline.update_container(container, context)
         c4d.EventAdd()

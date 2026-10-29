@@ -42,6 +42,7 @@ from ayon_core.lib import is_headless_mode_enabled  # noqa: E402
 from ayon_cinema4d.api import Cinema4DHost  # noqa: E402
 from ayon_cinema4d.api import doc_context  # noqa: E402
 from ayon_cinema4d.api import handoff  # noqa: E402
+from ayon_cinema4d.api import container_tag  # noqa: E402
 from ayon_cinema4d.api.ui import events, ids, registry  # noqa: E402
 
 log = logging.getLogger("ayon_cinema4d")
@@ -148,6 +149,10 @@ if __name__ == '__main__':
 
     COMMANDS.extend(registry.discover())
     registry.register(COMMANDS)
+
+    # Also on the farm: rendered scenes contain AYON tags
+    if not container_tag.register(__res__):  # noqa: F821
+        log.warning("Registering the AYON container tag failed")
 
     # No context switching for command line / farm renders
     if is_interactive():

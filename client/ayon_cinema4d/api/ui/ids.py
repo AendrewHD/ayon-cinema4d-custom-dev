@@ -29,6 +29,7 @@ CLASSIC_MANAGE = 1000006
 CLASSIC_WORKFILES = 1000007
 CLASSIC_PUBLISHER = 1000008
 QT_DOCK = 1000009
+CONTAINER_TAG = 1000010  # AYON tag on loaded products, see `container_tag`
 
 # Core message posted by `events.notify` (SpecialEventAdd)
 EVENTS_MESSAGE = DOCUMENT_WATCHER

@@ -52,9 +52,7 @@ class AlembicLoader(plugin.Cinema4DLoader):
             # Preferences > Interface > Insert Objects at
             lib.insert_objects(doc, nodes)
 
-        # TODO: Also containerize all children objects to ensure we keep them
-        #   linked explicitly
-
+        # Several roots are grouped under one null by `containerise`
         container = pipeline.containerise(
             name=str(name),
             namespace=str(namespace),
@@ -69,7 +67,6 @@ class AlembicLoader(plugin.Cinema4DLoader):
 
     def update(self, container, context):
 
-        container_node = container["node"]
         filepath = self.filepath_from_context(context)
 
         # todo: Add new objects
@@ -79,7 +76,6 @@ class AlembicLoader(plugin.Cinema4DLoader):
         # Any already existing ones, do nothing (unless there are specific
         # updates we want to transfer that it doesn't automatically)
         # loaded_doc = self._load_file(filepath)
-        # lib.add_objects_to_container(container_node, [camera])
 
         # todo: Remove or 'tag' removed objects
         # Any removed ones, keep them dangling in their "broken" state. It
@@ -88,7 +84,7 @@ class AlembicLoader(plugin.Cinema4DLoader):
         #     obj.Remove()
 
         # todo: Update existing objects
-        members = list(lib.get_objects_from_container(container_node))
+        members = pipeline.get_container_objects(container["node"])
         objects = set(members)
         for obj in members:
             children = lib.get_all_children(obj)
@@ -106,18 +102,5 @@ class AlembicLoader(plugin.Cinema4DLoader):
             if alembic_morph:
                 alembic_morph[c4d.ALEMBIC_MT_PATH] = filepath
 
-        # Update representation id
-        for i, base_container in container_node.GetUserDataContainer():
-            if base_container[c4d.DESC_NAME] == "representation":
-                container_node[i] = context["representation"]["id"]
-
-        c4d.EventAdd()
-
-    def remove(self, container):
-        """Remove all sub containers"""
-        container_node = container["node"]
-        for obj in lib.get_objects_from_container(container_node):
-            if obj:
-                obj.Remove()
-        container_node.Remove()
+        pipeline.update_container(container, context)
         c4d.EventAdd()

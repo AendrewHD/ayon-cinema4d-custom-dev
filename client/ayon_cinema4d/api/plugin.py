@@ -271,20 +271,15 @@ class Cinema4DLoader(LoaderPlugin):
         return name, namespace
 
     def remove(self, container):
-        """Remove all sub containers"""
-        container_node = container["node"]
-        for obj in lib.get_objects_from_container(container_node):
-            obj.Remove()
-        container_node.Remove()
-        c4d.EventAdd()
+        """Remove the container and its objects."""
+        pipeline.remove_container(container)
 
 
 class Cinema4DSingleObjLoader(Cinema4DLoader, ABC):
     """Base Loader plug-in that manages a single Cinema4D object with a
     filepath parameter.
 
-    Instead of containerizing on a hidden selection object this imprints the
-    node itself as a container."""
+    The created object itself carries the AYON container tag."""
     skip_discovery = True
 
     @property
@@ -350,21 +345,8 @@ class Cinema4DSingleObjLoader(Cinema4DLoader, ABC):
 
     def update(self, container, context):
 
-        obj = container["node"]
-
-        # Update filepath
-        if obj.CheckType(self._node_type_id):
-            self.set_obj_for_context(obj, context)
-
-        # Update representation id
-        for i, base_container in obj.GetUserDataContainer():
-            if base_container[c4d.DESC_NAME] == "representation":
-                obj[i] = context["representation"]["id"]
-
-        c4d.EventAdd()
-
-    def remove(self, container):
-        """Remove all sub containers"""
-        container_node = container["node"]
-        container_node.Remove()
+        for obj in pipeline.get_container_objects(container["node"]):
+            if obj.CheckType(self._node_type_id):
+                self.set_obj_for_context(obj, context, is_update=True)
+        pipeline.update_container(container, context)
         c4d.EventAdd()

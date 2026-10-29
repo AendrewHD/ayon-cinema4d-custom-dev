@@ -986,17 +986,9 @@ class LibraryDialog(AyonDialog):
         loader = self._loader_by_name("MergeLoader")
         name, namespace = loader().get_name_and_namespace(
             context, None, None, doc)
+        # Merge containers are always a group (update re-merges into it)
         with lib.undo_chunk():
-            group = c4d.BaseObject(c4d.Onull)
-            group.SetName(f"{namespace}_{name}")
-            group.InsertBefore(roots[0])
-            doc.AddUndo(c4d.UNDOTYPE_NEW, group)
-            for obj in roots:
-                matrix = obj.GetMg()
-                doc.AddUndo(c4d.UNDOTYPE_CHANGE, obj)
-                obj.Remove()
-                obj.InsertUnderLast(group)
-                obj.SetMg(matrix)
+            group = lib.group_objects(doc, roots, f"{namespace}_{name}")
         # containerise opens its own undo chunk
         pipeline.containerise(
             name=str(name), namespace=str(namespace), nodes=[group],
