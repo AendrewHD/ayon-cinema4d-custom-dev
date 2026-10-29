@@ -141,12 +141,6 @@ def is_playing():
 _drag_source = None
 
 
-def shift_held():
-    state = c4d.BaseContainer()
-    c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_SHIFT, state)
-    return bool(state.GetInt32(c4d.BFM_INPUT_QUALIFIER) & c4d.QSHIFT)
-
-
 def start_os_file_drag(paths, cancel_when=None):
     """Drag files like from Explorer (OS drag via Qt), returns on drop.
 
@@ -192,6 +186,48 @@ def start_os_file_drag(paths, cancel_when=None):
     return action != QtCore.Qt.IgnoreAction, bool(cancelled)
 
 
+VK_LBUTTON, VK_RBUTTON, VK_SHIFT, VK_ESCAPE = 0x01, 0x02, 0x10, 0x1B
+
+
+def _key_down(vk):
+    """Physical key / button state from Windows, None elsewhere.
+
+    Reliable during and right after an OS drag, unlike the Cinema 4D
+    input state (it misses events the drag loop swallowed).
+    """
+    if os.name != "nt":
+        return None
+    import ctypes
+    user32 = ctypes.windll.user32
+    if vk == VK_LBUTTON and user32.GetSystemMetrics(23):  # swapped buttons
+        vk = VK_RBUTTON
+    return bool(user32.GetAsyncKeyState(vk) & 0x8000)
+
+
+def _c4d_down(device, channel):
+    state = c4d.BaseContainer()
+    if not c4d.gui.GetInputState(device, channel, state):
+        return False
+    return bool(state.GetInt32(c4d.BFM_INPUT_VALUE))
+
+
+def mouse_down():
+    down = _key_down(VK_LBUTTON)
+    if down is None:
+        down = _c4d_down(c4d.BFM_INPUT_MOUSE, c4d.BFM_INPUT_MOUSELEFT)
+    return down
+
+
+def shift_pressed():
+    """Shift state from the OS, also valid inside the OS drag loop."""
+    down = _key_down(VK_SHIFT)
+    if down is None:
+        from qtpy import QtCore, QtGui
+        modifiers = QtGui.QGuiApplication.queryKeyboardModifiers()
+        down = bool(modifiers & QtCore.Qt.ShiftModifier)
+    return down
+
+
 def wait_for_release(status=None):
     """After a cancelled drag, follow the held mouse button.
 
@@ -203,29 +239,18 @@ def wait_for_release(status=None):
         c4d.StatusSetText(status)
     try:
         while True:
-            state = c4d.BaseContainer()
-            if not c4d.gui.GetInputState(
-                c4d.BFM_INPUT_MOUSE, c4d.BFM_INPUT_MOUSELEFT, state
-            ):
-                return "cancel"
-            if not state.GetInt32(c4d.BFM_INPUT_VALUE):
+            if not mouse_down():
                 return "release"
-            if not shift_held():
+            if not shift_pressed():
                 return "resume"
-            if c4d.gui.GetInputState(
-                c4d.BFM_INPUT_KEYBOARD, c4d.KEY_ESC, state
-            ) and state.GetInt32(c4d.BFM_INPUT_VALUE):
+            escape = _key_down(VK_ESCAPE)
+            if escape is None:
+                escape = _c4d_down(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_ESC)
+            if escape:
                 return "cancel"
             time.sleep(0.01)
     finally:
         c4d.StatusClear()
-
-
-def shift_pressed():
-    """Shift state from the OS, also valid inside the OS drag loop."""
-    from qtpy import QtCore, QtGui
-    modifiers = QtGui.QGuiApplication.queryKeyboardModifiers()
-    return bool(modifiers & QtCore.Qt.ShiftModifier)
 
 
 def confirm(text):
