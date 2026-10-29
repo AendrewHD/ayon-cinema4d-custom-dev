@@ -16,20 +16,18 @@ class XRefLoader(plugin.Cinema4DLoader):
     order = -8
 
     def load(self, context, name=None, namespace=None, options=None):
-        """Load the asset as XRef.
+        """Load the asset as XRef, namespaced by where it comes from.
 
         Todo:
             - Find out how to set the path to non-relative.
-            - Find out how to set the namespace separator.
         """
         filepath = self.filepath_from_context(context)
         doc = lib.active_document()
-        name, namespace = self.get_name_and_namespace(
-            context, name, namespace, doc)
-        basename = f"{namespace}_{name}"
+        name = name or context["product"]["name"]
+        namespace = namespace or lib.get_xref_namespace(context, doc)
 
         xref = c4d.BaseList2D(c4d.Oxref)
-        xref.SetName(basename)
+        xref.SetName(f"{namespace}{lib.XREF_SEPARATOR}{name}")
         lib.insert_object(doc, xref)
         xref.SetParameter(
             c4d.ID_CA_XREF_FILE,
@@ -41,6 +39,7 @@ class XRefLoader(plugin.Cinema4DLoader):
             str(namespace),
             c4d.DESCFLAGS_SET_USERINTERACTION
         )
+        lib.set_xref_separator(xref)  # stays '::' when not exposed
         c4d.EventAdd()
         # c4d.ID_CA_XREF_FILE       # filepath
         # c4d.ID_CA_XREF_NAMESPACE  # namespace
