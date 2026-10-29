@@ -885,7 +885,10 @@ class LibraryDialog(AyonDialog):
         except ReferenceError:
             same_doc = False
         if not same_doc:
-            return True  # opened as own document, nothing to track
+            # A plain drop opens the file as own document (Shift merges):
+            # close it again and merge the product into the previous one
+            self._merge_instead_of_open(doc, old_doc, entry)
+            return True
         keys = {lib.node_key(o): o for o in lib.iter_all_objects(doc)}
         new = [o for k, o in keys.items() if k not in old_objects]
         if not new:
@@ -908,6 +911,23 @@ class LibraryDialog(AyonDialog):
             self._containerise_drop(doc, roots, context)
         c4d.EventAdd()
         return True
+
+    def _merge_instead_of_open(self, opened_doc, old_doc, entry):
+        path = os.path.join(
+            opened_doc.GetDocumentPath(), opened_doc.GetDocumentName())
+        if os.path.normcase(os.path.normpath(path)) != os.path.normcase(
+            os.path.normpath(entry.path)
+        ):
+            return  # another document became active, not our drop
+        try:
+            old_doc.GetDocumentName()  # still open?
+        except ReferenceError:
+            return
+        c4d.documents.KillDocument(opened_doc)
+        c4d.documents.SetActiveDocument(old_doc)
+        c4d.EventAdd()
+        # Placed by Preferences > Insert Objects at (drop place unknown)
+        self.load_default([entry])
 
     def _containerise_drop(self, doc, roots, context):
         from ayon_cinema4d.api import pipeline
