@@ -151,8 +151,11 @@ if __name__ == '__main__':
     registry.register(COMMANDS)
 
     # Also on the farm: rendered scenes contain AYON tags
-    if not container_tag.register(__res__):  # noqa: F821
-        log.warning("Registering the AYON container tag failed")
+    try:
+        if not container_tag.register(__res__):  # noqa: F821
+            log.warning("Registering the AYON container tag failed")
+    except Exception:
+        log.warning("Registering the AYON container tag failed", exc_info=True)
 
     # No context switching for command line / farm renders
     if is_interactive():
