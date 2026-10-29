@@ -94,6 +94,11 @@ class AyonDialog(c4d.gui.GeDialog):
             self.set_status(f"Error: {error}", error=True)
             return None
 
+    def notify(self, kind):
+        """`events.notify` without waking this dialog itself."""
+        events.notify(kind)
+        self._seen = events.snapshot()
+
     def set_status(self, text, error=False):
         if not self.SHOW_STATUS or not self.IsOpen():
             return

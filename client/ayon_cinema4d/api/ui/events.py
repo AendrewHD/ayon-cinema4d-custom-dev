@@ -69,7 +69,7 @@ def changed_kinds(seen):
 
 
 def recent_events():
-    """Latest server events (dicts with 'topic', 'summary', 'project')."""
+    """Latest server events (dicts with 'id', 'topic', 'project')."""
     with _lock:
         return list(_recent)
 
@@ -91,8 +91,13 @@ def unsubscribe(dialog):
         _watcher = None
 
 
-def _current_project():
-    return os.getenv("AYON_PROJECT_NAME")
+def _watched_projects():
+    """Session project + projects shown by open windows (`project_name`)."""
+    projects = {os.getenv("AYON_PROJECT_NAME")}
+    for dialog in list(_subscribers):
+        projects.add(getattr(dialog, "project_name", None))
+    projects.discard(None)
+    return projects
 
 
 class _Watcher(threading.Thread):
@@ -101,6 +106,7 @@ class _Watcher(threading.Thread):
         self._stop_event = threading.Event()
         self._since = datetime.now(timezone.utc)
         self._seen_ids = []
+        self._failed = False
 
     def stop(self):
         self._stop_event.set()
@@ -110,20 +116,24 @@ class _Watcher(threading.Thread):
             try:
                 if self._poll():
                     notify(SERVER)
+                self._failed = False
             except Exception:
-                log.debug("Polling AYON events failed", exc_info=True)
+                # Warn once, then keep quiet until it works again
+                level = logging.DEBUG if self._failed else logging.WARNING
+                log.log(level, "Polling AYON events failed", exc_info=True)
+                self._failed = True
 
     def _poll(self):
-        project_name = _current_project()
-        if not project_name:
+        project_names = _watched_projects()
+        if not project_names:
             return False
 
         newer_than = (self._since - OVERLAP).isoformat()
         events = list(ayon_api.get_events(
             topics=SERVER_TOPICS,
-            project_names=[project_name],
+            project_names=list(project_names),
             newer_than=newer_than,
-            fields={"id", "topic", "createdAt", "summary", "project"},
+            fields={"id", "topic", "createdAt", "project"},
         ))
         new_events = [e for e in events if e["id"] not in self._seen_ids]
         if not new_events:

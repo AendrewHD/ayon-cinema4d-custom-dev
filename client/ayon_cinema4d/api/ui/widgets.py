@@ -121,6 +121,11 @@ def popup(entries):
     return result
 
 
+def is_playing():
+    """Animation playback runs (skip scene scans then)."""
+    return c4d.CheckIsRunning(c4d.CHECKISRUNNING_ANIMATIONRUNNING)
+
+
 def confirm(text):
     return c4d.gui.QuestionDialog(text)
 

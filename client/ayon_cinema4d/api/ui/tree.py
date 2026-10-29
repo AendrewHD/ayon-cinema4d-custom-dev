@@ -114,6 +114,8 @@ class TreeModel(c4d.gui.TreeViewFunctions):
         self.on_check = None
         self.on_delete = None
         self.context_menu = None
+        # Column id (1-based) that shows swatch / icon
+        self.lead_column = 1
 
     # -- model -----------------------------------------------------------
     def attach(self, gui):
@@ -255,7 +257,7 @@ class TreeModel(c4d.gui.TreeViewFunctions):
         return None
 
     def _lead_width(self, obj, col):
-        if col != 1:
+        if col != self.lead_column:
             return 0
         width = 0
         if obj.swatch is not None:
@@ -291,7 +293,7 @@ class TreeModel(c4d.gui.TreeViewFunctions):
         width, height = drawinfo["width"], drawinfo["height"]
         selected = obj.key in self._selected
 
-        if col == 1:
+        if col == self.lead_column:
             if obj.swatch is not None:
                 top = y + (height - SWATCH_SIZE) // 2
                 area.DrawSetPen(obj.swatch)

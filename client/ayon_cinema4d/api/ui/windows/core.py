@@ -15,14 +15,6 @@ def context_label():
     return f"{get_current_folder_path()}, {get_current_task_name()}"
 
 
-def update_context_label():
-    """Show the current context in the menu (after a context change)."""
-    plugin = c4d.plugins.FindPlugin(ids.CONTEXT_LABEL)
-    if plugin is not None:
-        plugin.SetName(context_label())
-        c4d.gui.UpdateMenus()
-
-
 def _show_create():
     host_tools.show_publisher(tab="create", parent=get_main_window())
 
