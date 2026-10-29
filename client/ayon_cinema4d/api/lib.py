@@ -193,12 +193,15 @@ def get_unique_namespace(folder_name, prefix=None, suffix=None, doc=None):
     return unique
 
 
-def imprint(node, data, group=None):
+def imprint(node, data, group=None, group_open=False):
     """Write `data` to `node` as userDefined attributes
 
     Arguments:
-        node (c4d.BaseObject): The selection object
+        node (c4d.BaseList2D): The node to write to
         data (dict): Dictionary of key/value pairs
+        group (str, optional): User data group to add new attributes to
+        group_open (bool): Unfold the group in the Attribute Manager when
+            it is created
     """
 
     existing_user_data = node.GetUserDataContainer()
@@ -222,7 +225,7 @@ def imprint(node, data, group=None):
             group_bc[c4d.DESC_NAME] = group
             group_bc[c4d.DESC_SHORT_NAME] = group
             group_bc[c4d.DESC_TITLEBAR] = True
-            group_bc[c4d.DESC_GUIOPEN] = False
+            group_bc[c4d.DESC_GUIOPEN] = group_open
             group_id = node.AddUserData(group_bc)
 
     for key, value in data.items():
