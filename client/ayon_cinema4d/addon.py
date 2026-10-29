@@ -59,10 +59,16 @@ class Cinema4DAddon(AYONAddon, IHostAddon):
         if os.name == "nt":
             path_key = path_key.upper()
 
+        # Windows env names are case-insensitive, but the dict is not: a
+        # 'g_additionalModulePath' from the application settings next to our
+        # key would end up twice in the process environment and one of them
+        # would win. Merge every spelling into one key.
+        paths = []
+        for key in [k for k in env if k.lower() == path_key.lower()]:
+            paths.extend((env.pop(key) or "").split(os.pathsep))
+
         # The environment variable replaces `g_additionalModulePath` from
         # the application's `config.txt`, so its paths are carried over.
-        old_g_module_path = env.get(path_key) or ""
-        paths = old_g_module_path.split(os.pathsep)
         paths.extend(get_config_module_paths(app))
         for path in paths:
             if not path:
