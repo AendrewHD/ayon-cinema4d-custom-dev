@@ -2,10 +2,15 @@
 
 The container data (representation, loader, ...) is user data on the tag,
 written by `pipeline.imprint_container`. The icon shows the version state
-(`tag_status`), the buttons update the product or open Manage.
+(`tag_status`), the buttons update the product, open Manage or the
+version's AYON web page.
 Scenes stay usable where the addon isn't installed (data is kept).
 """
+import logging
+import webbrowser
+
 import c4d
+import ayon_api
 
 from . import lib
 from .ui import ids
@@ -16,6 +21,9 @@ DESCRIPTION = "Tayoncontainer"  # startup/res/description/tayoncontainer.res
 # Button ids, see startup/res/description/tayoncontainer.h
 AYON_UPDATE_LATEST = 1000
 AYON_OPEN_MANAGE = 1001
+AYON_OPEN_WEB = 1002
+
+log = logging.getLogger(__name__)
 
 COLORS = {
     None: (0, 220, 170),         # not checked yet: AYON
@@ -57,6 +65,31 @@ class ContainerTag(c4d.plugins.TagData):
             tag_status.queue_update(node)
         elif button_id == AYON_OPEN_MANAGE:
             c4d.CallCommand(ids.MANAGE)
+        elif button_id == AYON_OPEN_WEB:
+            _open_web(node)
+
+
+def _open_web(tag):
+    """Open the tag's version on the AYON web page."""
+    from . import inventory
+    from ayon_core.pipeline import get_current_project_name
+
+    project_name = (
+        lib.get_object_user_data_by_name(tag, "project_name")
+        or get_current_project_name())
+    repre_id = lib.get_object_user_data_by_name(tag, "representation")
+    try:
+        repre = ayon_api.get_representation_by_id(
+            project_name, repre_id, fields={"versionId"})
+    except Exception:
+        log.warning("Looking up the AYON version failed", exc_info=True)
+        repre = None
+    if not repre:
+        c4d.gui.MessageDialog(
+            f"The loaded version was not found in AYON ({project_name}).")
+        return
+    webbrowser.open_new_tab(
+        inventory.version_web_url(project_name, repre["versionId"]))
 
 
 def _draw_icon(color):

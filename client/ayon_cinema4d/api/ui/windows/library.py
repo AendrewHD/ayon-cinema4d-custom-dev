@@ -12,7 +12,6 @@ import logging
 import tempfile
 import threading
 import webbrowser
-import urllib.parse
 
 import c4d
 import ayon_api
@@ -30,7 +29,7 @@ from ayon_core.pipeline.load import (
     loaders_from_repre_context,
 )
 
-from ayon_cinema4d.api import lib
+from ayon_cinema4d.api import inventory, lib
 from ayon_cinema4d.api.browser_drag import EXTENSION_PRIORITY, SKIP_NAMES
 from ayon_cinema4d.api.ui import entities, events, ids, widgets
 from ayon_cinema4d.api.ui.dialog import AyonDialog
@@ -1220,12 +1219,8 @@ class LibraryDialog(AyonDialog):
         return menu or [("No loader for these files", None)]
 
     def open_in_ayon(self, entry):
-        base_url = ayon_api.get_base_url().rstrip("/")
-        query = urllib.parse.urlencode({
-            "project": self.project_name, "type": "version",
-            "id": entry.version["id"]})
-        webbrowser.open_new_tab(
-            f"{base_url}/projects/{self.project_name}/products?{query}")
+        webbrowser.open_new_tab(inventory.version_web_url(
+            self.project_name, entry.version["id"]))
 
     # -- commands --------------------------------------------------------
     def on_command(self, gadget_id, msg):

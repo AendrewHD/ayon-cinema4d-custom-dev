@@ -2,6 +2,8 @@
 
 Shared by the Manage window and the AYON tag icons (`tag_status`).
 """
+import urllib.parse
+
 import ayon_api
 
 from ayon_core.pipeline import get_current_project_name
@@ -10,6 +12,14 @@ STATE_LATEST = "latest"
 STATE_OUTDATED = "outdated"
 STATE_HERO = "hero"
 STATE_MISSING = "missing"
+
+
+def version_web_url(project_name, version_id):
+    """AYON web page of a version (products page with the version open)."""
+    base_url = ayon_api.get_base_url().rstrip("/")
+    query = urllib.parse.urlencode(
+        {"project": project_name, "type": "version", "id": version_id})
+    return f"{base_url}/projects/{project_name}/products?{query}"
 
 
 def collect_inventory(containers):
