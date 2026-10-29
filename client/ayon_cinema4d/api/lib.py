@@ -892,6 +892,41 @@ def iter_all_objects(doc):
     return iter_objects(doc.GetFirstObject())
 
 
+# Preferences > Files > Import/Export > "Merge on Drag & Drop"
+IMEXPORT_PREFS_ID = 465001638
+
+
+def _merge_on_drop_param():
+    """The prefs node and full DescID of the preference, else (None, None)."""
+    param = getattr(c4d, "PREF_IMEXPORT_MERGE_ON_DD", None)
+    prefs = c4d.plugins.FindPlugin(IMEXPORT_PREFS_ID) if param else None
+    if prefs is None:
+        return None, None
+    # The DescID may be nested in a group container, search the description
+    for _, desc_id, _ in prefs.GetDescription(c4d.DESCFLAGS_DESC_NONE):
+        if desc_id[desc_id.GetDepth() - 1].id == param:
+            return prefs, desc_id
+    return None, None
+
+
+def get_merge_on_drop():
+    """The 'Merge on Drag & Drop' preference, None when not accessible."""
+    prefs, desc_id = _merge_on_drop_param()
+    if prefs is None:
+        return None
+    value = prefs.GetParameter(desc_id, c4d.DESCFLAGS_GET_NONE)
+    return None if value is None else bool(value)
+
+
+def set_merge_on_drop(enabled):
+    """Set 'Merge on Drag & Drop'. Returns True when it took effect."""
+    prefs, desc_id = _merge_on_drop_param()
+    if prefs is None:
+        return False
+    prefs.SetParameter(desc_id, bool(enabled), c4d.DESCFLAGS_SET_NONE)
+    return get_merge_on_drop() == bool(enabled)
+
+
 XREF_SEPARATOR = " || "
 
 
