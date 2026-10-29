@@ -890,3 +890,46 @@ def node_key(node):
 def iter_all_objects(doc):
     """Every object of the document, depth first."""
     return iter_objects(doc.GetFirstObject())
+
+
+XREF_SEPARATOR = " || "
+
+
+def get_xref_namespace(context, doc):
+    """Namespace of a new XRef: where the product comes from.
+
+    `{folder}_{productType}`, the product name when that is taken by
+    another XRef, a number only when the same product is loaded again.
+    """
+    folder = context["folder"]["name"]
+    if folder[0].isdigit():
+        folder = f"_{folder}"
+    product = context["product"]
+    taken = {
+        obj[c4d.ID_CA_XREF_NAMESPACE] for obj in iter_all_objects(doc)
+        if obj.CheckType(c4d.Oxref)
+    }
+    for namespace in (
+        f"{folder}_{product['productType']}", f"{folder}_{product['name']}"
+    ):
+        if namespace not in taken:
+            return namespace
+    number = 2
+    while f"{namespace}_{number}" in taken:
+        number += 1
+    return f"{namespace}_{number}"
+
+
+def set_xref_separator(xref, separator=XREF_SEPARATOR):
+    """Set the namespace separator (default '::') if Cinema 4D exposes it.
+
+    It is an XRef option, not a documented parameter: look it up in the
+    description by symbol. Returns True when it was set.
+    """
+    description = xref.GetDescription(c4d.DESCFLAGS_DESC_NONE)
+    for bc, desc_id, _ in description:
+        ident = bc[c4d.DESC_IDENT] or ""
+        if "XREF" in ident and "SEPARATOR" in ident:
+            return xref.SetParameter(
+                desc_id, separator, c4d.DESCFLAGS_SET_USERINTERACTION)
+    return False
