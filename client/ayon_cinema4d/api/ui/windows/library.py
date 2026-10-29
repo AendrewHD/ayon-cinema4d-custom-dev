@@ -462,7 +462,14 @@ class ProductArea(c4d.gui.GeUserArea):
         # turns the merged objects into an AYON container (see after_drop)
         if not qualifier and entry.path:
             before = self.dialog.scene_snapshot()
-            if self.HandleMouseDrag(
+            if _is_scene_file(entry.path):
+                # The Object Manager / viewport only take scene files from
+                # an OS drag (like Explorer), not from a dialog drag
+                if self._drag_started(x, y):
+                    widgets.start_os_file_drag([entry.path])
+                    self.dialog.guard(self.dialog.after_drop, entry, before)
+                    return True
+            elif self.HandleMouseDrag(
                 msg, _drag_type(entry.path), entry.path, 0
             ):
                 self.dialog.guard(self.dialog.after_drop, entry, before)
@@ -470,6 +477,24 @@ class ProductArea(c4d.gui.GeUserArea):
         if not qualifier and len(self.selected) > 1:
             self._select(index, 0)  # plain click in a multi selection
         return True
+
+    def _drag_started(self, x, y, distance=6):
+        """Follow the pressed mouse, True once it moved `distance` px."""
+        self.MouseDragStart(
+            c4d.KEY_MLEFT, x, y,
+            c4d.MOUSEDRAGFLAGS_DONTHIDEMOUSE | c4d.MOUSEDRAGFLAGS_NOMOVE)
+        moved = 0.0
+        started = False
+        while True:
+            result, dx, dy, _channels = self.MouseDrag()
+            if result != c4d.MOUSEDRAGRESULT_CONTINUE:
+                break
+            moved += abs(dx) + abs(dy)
+            if moved >= distance:
+                started = True
+                break
+        self.MouseDragEnd()
+        return started
 
     def _select(self, index, qualifier):
         entry = self.entries[index]
@@ -484,6 +509,11 @@ class ProductArea(c4d.gui.GeUserArea):
             self.anchor = index
         self.Redraw()
         self.dialog.guard(self.dialog.on_product_selection)
+
+
+def _is_scene_file(path):
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    return ext in SCENE_EXTENSIONS
 
 
 def _drag_type(path):
