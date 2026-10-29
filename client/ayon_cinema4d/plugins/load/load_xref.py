@@ -26,7 +26,7 @@ class XRefLoader(plugin.Cinema4DLoader):
         name = name or context["product"]["name"]
         namespace = namespace or lib.get_xref_namespace(context, doc)
 
-        xref = c4d.BaseList2D(c4d.Oxref)
+        xref = lib.new_xref()  # options from resource/xref_template.c4d
         xref.SetName(f"{namespace}{lib.XREF_SEPARATOR}{name}")
         lib.insert_object(doc, xref)
         xref.SetParameter(
@@ -39,7 +39,6 @@ class XRefLoader(plugin.Cinema4DLoader):
             str(namespace),
             c4d.DESCFLAGS_SET_USERINTERACTION
         )
-        lib.set_xref_separator(xref)  # stays '::' when not exposed
         c4d.EventAdd()
         # c4d.ID_CA_XREF_FILE       # filepath
         # c4d.ID_CA_XREF_NAMESPACE  # namespace
