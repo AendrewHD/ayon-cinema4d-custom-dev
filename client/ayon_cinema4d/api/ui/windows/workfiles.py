@@ -334,6 +334,7 @@ class WorkfilesDialog(AyonDialog):
                         "name": os.path.basename(info.filepath),
                         "modified": widgets.format_time(info.created_at),
                         "author": info.author or "",
+                        "_sort": info.created_at or 0,
                     },
                     data=("published", info, folder, task),
                     dim=not info.available,
@@ -350,9 +351,10 @@ class WorkfilesDialog(AyonDialog):
                     {
                         "name": os.path.basename(info.filepath),
                         "version": info.version or 0,
-                        "comment": info.comment or "",
+                        # comment from the file name, else the description
+                        "comment": info.comment or info.description or "",
                         "modified": widgets.format_time(info.file_modified),
-                        "author": "",
+                        "author": info.updated_by or info.created_by or "",
                     },
                     data=("workfile", info, folder, task),
                     bold=is_current,
@@ -363,6 +365,9 @@ class WorkfilesDialog(AyonDialog):
             items.sort(key=lambda i: i.values["version"], reverse=True)
             for item in items:
                 item.values["version"] = f"v{item.values['version']:03d}"
+        if self.GetBool(ID_PUBLISHED):
+            # newest first, like the workfiles
+            items.sort(key=lambda i: i.values.pop("_sort"), reverse=True)
         self.files.set_items(items)
         self._update_buttons()
 
