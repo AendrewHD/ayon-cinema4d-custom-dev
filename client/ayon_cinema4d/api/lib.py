@@ -445,6 +445,24 @@ def add_objects_to_container(container, nodes):
     c4d.EventAdd()
 
 
+def group_objects(doc, objects, name):
+    """Move `objects` under a new null placed at the first one.
+
+    World transforms are kept. Call inside an undo chunk.
+    """
+    group = c4d.BaseObject(c4d.Onull)
+    group.SetName(name)
+    group.InsertBefore(objects[0])
+    doc.AddUndo(c4d.UNDOTYPE_NEW, group)
+    for obj in objects:
+        matrix = obj.GetMg()
+        doc.AddUndo(c4d.UNDOTYPE_HIERARCHY_PSR, obj)
+        obj.Remove()
+        obj.InsertUnderLast(group)
+        obj.SetMg(matrix)
+    return group
+
+
 def get_materials_from_objects(objects):
     """Get the materials assigned to the objects.
 

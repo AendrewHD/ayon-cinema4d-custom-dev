@@ -1,0 +1,9 @@
+#ifndef TAYONCONTAINER_H__
+#define TAYONCONTAINER_H__
+
+enum
+{
+	TAYONCONTAINER_DUMMY = 1000,
+};
+
+#endif

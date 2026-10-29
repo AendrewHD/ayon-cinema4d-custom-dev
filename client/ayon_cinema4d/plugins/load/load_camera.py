@@ -74,6 +74,8 @@ class CameraLoader(plugin.Cinema4DLoader):
             camera (c4d.CameraObject): The camera to protect.
         """
 
+        if camera.GetTag(c4d.Tprotection):  # kept from the previous version
+            return
         protection_tag = c4d.BaseTag(c4d.Tprotection)
         camera.InsertTag(protection_tag)
         self.log.debug("Added a protection tag to camera '%s'", camera.GetName())
@@ -112,27 +114,23 @@ class CameraLoader(plugin.Cinema4DLoader):
 
     def update(self, container, context):
         doc = lib.active_document()
-        container_node = container["node"]
+        node = container["node"]
         filepath = self.filepath_from_context(context)
 
-        camera_name = None
-        camera_tags = None
-        # There should be only 1 camera node here, remove it
-        for obj in lib.get_objects_from_container(container_node):
-            if obj.GetTypeName() == "Camera":
-                camera_name = obj.GetName()
-                camera_tags = obj.GetTags()
-            obj.Remove()
-
-        # Add new camera
+        # The new camera takes the place, name and tags (incl. the AYON tag)
+        # of the old one. There should be only 1 camera.
+        old = pipeline.get_container_objects(node)
         camera = self._merge_camera(filepath, doc=doc)
-        doc.InsertObject(camera)
-
-        if camera_name:
-            camera.SetName(str(camera_name))
-        if camera_tags:
-            for tag in camera_tags:
-                camera.InsertTag(tag)
+        if old:
+            camera.InsertBefore(old[0])
+            camera.SetName(old[0].GetName())
+            for tag in old[0].GetTags():
+                tag.Remove()
+                camera.InsertTag(tag, camera.GetLastTag())
+        else:
+            doc.InsertObject(camera)
+        for obj in old:
+            obj.Remove()
 
         # Set the camera as the active camera
         for basedraw in (doc.GetActiveBaseDraw(), doc.GetRenderBaseDraw()):
@@ -140,11 +138,7 @@ class CameraLoader(plugin.Cinema4DLoader):
 
         self._protect_camera(camera)
 
-        lib.add_objects_to_container(container_node, [camera])
-
-        # Update representation id
-        for i, base_container in container_node.GetUserDataContainer():
-            if base_container[c4d.DESC_NAME] == "representation":
-                container_node[i] = context["representation"]["id"]
-
+        if not isinstance(node, c4d.BaseTag):  # legacy selection object
+            lib.add_objects_to_container(node, [camera])
+        pipeline.update_container(container, context)
         c4d.EventAdd()

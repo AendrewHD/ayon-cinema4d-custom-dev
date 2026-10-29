@@ -16,7 +16,7 @@ from ayon_core.pipeline.load import (
     update_container,
 )
 
-from ayon_cinema4d.api import lib
+from ayon_cinema4d.api import lib, pipeline
 from ayon_cinema4d.api.ui import events, ids, widgets
 from ayon_cinema4d.api.ui.dialog import AyonDialog
 from ayon_cinema4d.api.ui.registry import Command
@@ -380,7 +380,7 @@ class ManageDialog(AyonDialog):
         for item in items:
             node = item.data["container"].get("node")
             if node is not None and node.IsAlive():
-                nodes.extend(lib.get_objects_from_container(node))
+                nodes.extend(pipeline.get_container_objects(node))
         lib.set_selection(doc, nodes)
         c4d.EventAdd()
 

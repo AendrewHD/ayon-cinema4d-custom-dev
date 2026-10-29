@@ -26,7 +26,7 @@ from .workio import (
 )
 import ayon_cinema4d
 
-from . import lib, plugin, doc_context
+from . import lib, plugin, doc_context, container_tag
 
 log = logging.getLogger("ayon_cinema4d")
 
@@ -128,145 +128,128 @@ class Cinema4DHost(HostBase, IWorkfileHost, ILoadHost, IPublishHost):
         return data
 
 
-def parse_container(container):
-    """Return the container node's full container data.
+def get_container_tag(obj):
+    """Return the AYON container tag of `obj`, None if it has none."""
+    return obj.GetTag(container_tag.TAG_ID) if obj else None
+
+
+def get_container_objects(node):
+    """Return the objects of a container node.
+
+    The tagged object for an AYON tag, the members of a legacy selection
+    object, or the legacy object imprinted with the container data itself.
+    """
+    if isinstance(node, c4d.BaseTag):
+        obj = node.GetObject()
+        return [obj] if obj else []
+    if node.CheckType(c4d.Oselection):
+        return list(lib.get_objects_from_container(node))
+    return [node]
+
+
+def parse_container(node):
+    """Return the full container data of a container node.
 
     Args:
-        container (str): A container node name.
+        node (c4d.BaseList2D): AYON tag or legacy container object.
 
     Returns:
         dict[str, Any]: The container schema data for this container node.
 
     """
-    data = lib.read(container)
+    data = lib.read(node)
 
     # Backwards compatibility pre-schemas for containers
     data["schema"] = data.get("schema", "ayon:container-3.0")
 
     # Append transient data
-    data["objectName"] = container.GetName()
-    data["node"] = container
+    owner = node.GetObject() if isinstance(node, c4d.BaseTag) else node
+    data["objectName"] = owner.GetName() if owner else node.GetName()
+    data["node"] = node
 
     return data
 
 
 def iter_containers(doc=None):
-    """Yield all objects in the active document that have 'id' attribute set
-    matching an AYON container ID"""
-    doc = doc or c4d.documents.GetActiveDocument()
-    containers = lib.iter_objects(doc.GetFirstObject())
-    for container in containers:
-        if lib.get_object_user_data_by_name(container, "id") != AYON_CONTAINER_ID:  # noqa
-            continue
+    """Yield the containers of the document.
 
-        data = parse_container(container)
-        yield data
-
-
-def get_containers_layer(doc=None):
-    """Get the layer that holds all container objects.
-
-    To make the scene less cluttered the containers (selection objects) are put
-    in a layer 'AYON_CONTAINERS'. This layer is hidden in the outliner.
-
-    Arguments:
-        doc (optional c4d.documents.BaseDocument): The document to work on. If
-            it is None it uses the active document.
+    AYON tags, plus the legacy selection objects / imprinted objects. A tag
+    below another AYON tag came with that product (e.g. a merged model
+    built from loaded assets) and is part of it, so it is skipped.
     """
-
-    doc = doc or lib.active_document()
-    layer_root = doc.GetLayerObjectRoot()
-    for layer in layer_root.GetChildren():
-        if layer.GetName() == AYON_CONTAINERS:
-            return layer
-
-    layer = c4d.documents.LayerObject()
-    layer.SetName(AYON_CONTAINERS)
-    layer.InsertUnder(layer_root)
-    layer[c4d.ID_LAYER_MANAGER] = False
-    layer[c4d.ID_LAYER_VIEW] = False
-    layer[c4d.ID_LAYER_RENDER] = False
-    layer[c4d.ID_LAYER_COLOR] = c4d.Vector(0.3, 0.66, 0.96)
-    layer[c4d.ID_LAYER_LOCKED] = True
-
-    c4d.EventAdd()
-
-    return layer
+    doc = doc or c4d.documents.GetActiveDocument()
+    stack = [(obj, False) for obj in reversed(doc.GetObjects())]
+    while stack:
+        obj, nested = stack.pop()
+        tag = get_container_tag(obj)
+        if tag is not None:
+            if not nested:
+                yield parse_container(tag)
+            nested = True
+        elif not nested and lib.get_object_user_data_by_name(
+                obj, "id") == AYON_CONTAINER_ID:
+            yield parse_container(obj)
+        stack.extend((child, nested) for child in reversed(obj.GetChildren()))
 
 
 def containerise(name,
                  namespace,
                  nodes,
                  context,
-                 loader,
-                 suffix="_CON"):
-    """Bundle `nodes` into an assembly and imprint it with metadata
+                 loader):
+    """Tag the root of the loaded `nodes` as AYON container.
 
-    Containerisation enables a tracking of version, author and origin
-    for loaded assets.
+    Several roots are grouped under a null first: one tag = one container.
 
     Arguments:
         name (str): Name of resulting assembly
         namespace (str): Namespace under which to host container
-        nodes (list): Long names of nodes to containerise
+        nodes (list[c4d.BaseObject]): Loaded root objects
         context (dict): Asset information
         loader (str): Name of loader used to produce this container.
-        suffix (str, optional): Suffix of container, defaults to `_CON`.
 
     Returns:
-        container (c4d.BaseObject): OSelection BaseObject container
+        c4d.BaseTag: The AYON container tag.
 
     """
-
-    container_name = lib.get_unique_namespace(
-        name,
-        prefix=namespace + "_",
-        suffix=suffix
-    )
+    doc = nodes[0].GetDocument() or lib.active_document()
     with lib.undo_chunk():
-        container = c4d.BaseObject(c4d.Oselection)
-        container.SetName(container_name)
-        in_exclude_data = container[c4d.SELECTIONOBJECT_LIST]
-        for node in nodes:
-            in_exclude_data.InsertObject(node, 1)
-        container[c4d.SELECTIONOBJECT_LIST] = in_exclude_data
-        doc = lib.active_document()
-        doc.InsertObject(container)
-
-        imprint_container(
-            container,
-            name,
-            namespace,
-            context,
-            loader
-        )
-
-        # Add the container to the AYON_CONTAINERS layer
-        avalon_layer = get_containers_layer(doc=doc)
-        container.SetLayerObject(avalon_layer)
-        # Hide the container in the Object Manager
-        # container.ChangeNBit(c4d.NBIT_OHIDE, c4d.NBITCONTROL_SET)
-        c4d.EventAdd()
-
-    return container
+        root = nodes[0]
+        if len(nodes) > 1:
+            root = lib.group_objects(doc, nodes, f"{namespace}_{name}")
+        tag = imprint_container(root, name, namespace, context, loader)
+    c4d.EventAdd()
+    return tag
 
 
 def imprint_container(
-    container,
+    node,
     name,
     namespace,
     context,
     loader
 ):
-    """Imprints an object with container metadata and hides it from the user
-    by adding it into a hidden layer.
+    """Imprint the container data on the AYON tag of `node`.
+
     Arguments:
-        container (c4d.BaseObject): The object to imprint.
+        node (c4d.BaseObject | c4d.BaseTag): Object to tag, or its tag.
         name (str): Name of resulting assembly
         namespace (str): Namespace under which to host container
         context (dict): Asset information
         loader (str): Name of loader used to produce this container.
+
+    Returns:
+        c4d.BaseTag: The AYON container tag.
     """
+    tag = node
+    if not isinstance(node, c4d.BaseTag):
+        tag = get_container_tag(node)
+        if tag is None:
+            tag = node.MakeTag(container_tag.TAG_ID)
+            doc = node.GetDocument()
+            if doc:
+                doc.AddUndo(c4d.UNDOTYPE_NEW, tag)
+
     data = {
         "schema": "ayon:container-3.0",
         "id": AYON_CONTAINER_ID,
@@ -277,8 +260,52 @@ def imprint_container(
         # Library projects: update / manage need the source project
         "project_name": str(context["project"]["name"]),
     }
+    data.update(_display_data(context))
+    lib.imprint(tag, data, group="AYON")
+    _name_tag(tag, context)
+    return tag
 
-    lib.imprint(container, data, group="AYON")
+
+def update_container(container, context):
+    """Store the new representation of `container` after an update."""
+    node = container["node"]
+    data = {"representation": str(context["representation"]["id"])}
+    data.update(_display_data(context))
+    lib.imprint(node, data, group="AYON")
+    _name_tag(node, context)
+
+
+def remove_container(container):
+    """Remove the container node and its objects."""
+    node = container["node"]
+    objects = get_container_objects(node)
+    for obj in objects:
+        obj.Remove()
+    # A tag goes with its object
+    if not isinstance(node, c4d.BaseTag) and node not in objects:
+        node.Remove()
+    c4d.EventAdd()
+
+
+def _version_label(context):
+    version = context["version"]["version"]
+    return "hero" if version < 0 else f"v{version:03d}"
+
+
+def _display_data(context):
+    """Readable info for the Attribute Manager, not used by the pipeline."""
+    return {
+        "folder_path": str(context["folder"]["path"]),
+        "product_name": str(context["product"]["name"]),
+        "version_name": _version_label(context),
+    }
+
+
+def _name_tag(node, context):
+    """Tag name shows product and version in the Object Manager tooltip."""
+    if isinstance(node, c4d.BaseTag):
+        node.SetName(
+            f"AYON {context['product']['name']} {_version_label(context)}")
 
 
 def _store_document_context(workfile_context):

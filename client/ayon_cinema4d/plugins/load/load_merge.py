@@ -121,28 +121,21 @@ class MergeLoader(plugin.Cinema4DLoader):
 
     def update(self, container, context):
         filepath = self.filepath_from_context(context)
-        container_node = container["node"]
-        doc = container_node.GetDocument()
+        groups = pipeline.get_container_objects(container["node"])
+        doc = groups[0].GetDocument() if groups else lib.active_document()
 
         with lib.undo_chunk():
-            for group in lib.get_objects_from_container(container_node):
+            for group in groups:
                 self._clear_group(doc, group)
                 self._merge(doc, filepath, group)
 
-        for i, base_container in container_node.GetUserDataContainer():
-            if base_container[c4d.DESC_NAME] == "representation":
-                container_node[i] = context["representation"]["id"]
-                break
+        pipeline.update_container(container, context)
         c4d.EventAdd()
 
     def remove(self, container):
-        container_node = container["node"]
-        doc = container_node.GetDocument()
-        for group in lib.get_objects_from_container(container_node):
-            self._clear_group(doc, group)
-            group.Remove()
-        container_node.Remove()
-        c4d.EventAdd()
+        for group in pipeline.get_container_objects(container["node"]):
+            self._clear_group(group.GetDocument(), group)
+        pipeline.remove_container(container)
 
     @staticmethod
     def _clear_group(doc, group):
