@@ -140,23 +140,48 @@ def is_playing():
 _drag_source = None
 
 
-def start_os_file_drag(paths):
+def shift_held():
+    state = c4d.BaseContainer()
+    c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_SHIFT, state)
+    return bool(state.GetInt32(c4d.BFM_INPUT_QUALIFIER) & c4d.QSHIFT)
+
+
+def start_os_file_drag(paths, withhold=None):
     """Drag files like from Explorer (OS drag via Qt), returns on drop.
 
     Cinema 4D handles the drop natively: merge in the Object Manager /
     viewport, image nodes in the Node Editor.
+
+    Args:
+        paths (list[str]): Files to drag.
+        withhold (callable): Asked when the drop target reads the files;
+            True hands over no files, so the target does nothing.
+
+    Returns:
+        tuple[bool, bool]: Dropped (accepted by the target), withheld.
     """
     global _drag_source
     from qtpy import QtCore, QtGui, QtWidgets
 
+    class MimeData(QtCore.QMimeData):
+        withheld = False
+
+        def retrieveData(self, mime_type, preferred_type):
+            if withhold is not None and withhold():
+                self.withheld = True
+                return None
+            self.withheld = False
+            return super().retrieveData(mime_type, preferred_type)
+
     if _drag_source is None:
         _drag_source = QtWidgets.QWidget()
-    mime = QtCore.QMimeData()
+    mime = MimeData()
     mime.setUrls([QtCore.QUrl.fromLocalFile(path) for path in paths])
     drag = QtGui.QDrag(_drag_source)
     drag.setMimeData(mime)
     exec_ = getattr(drag, "exec", None) or drag.exec_
-    return exec_(QtCore.Qt.CopyAction)
+    action = exec_(QtCore.Qt.CopyAction)
+    return action != QtCore.Qt.IgnoreAction, mime.withheld
 
 
 def confirm(text):

@@ -467,8 +467,14 @@ class ProductArea(c4d.gui.GeUserArea):
                 # an OS drag (like Explorer), not from a dialog drag
                 if self._drag_started(x, y):
                     self.dialog.force_merge_on_drop()
-                    widgets.start_os_file_drag([entry.path])
-                    self.dialog.guard(self.dialog.after_drop, entry, before)
+                    # Shift at the drop: no file for Cinema 4D, XRef instead
+                    _, xref = widgets.start_os_file_drag(
+                        [entry.path], withhold=widgets.shift_held)
+                    if xref and widgets.shift_held():
+                        self.dialog.guard(self.dialog.xref_drop, entry)
+                    else:
+                        self.dialog.guard(
+                            self.dialog.after_drop, entry, before)
                     return True
             elif self.HandleMouseDrag(
                 msg, _drag_type(entry.path), entry.path, 0
@@ -872,11 +878,15 @@ class LibraryDialog(AyonDialog):
         self._end_drop()
         super().DestroyWindow()
 
+    def xref_drop(self, entry):
+        """Shift-drop: load as XRef, nothing was handed to Cinema 4D."""
+        self._end_drop()
+        # Placed by Preferences > Insert Objects at (drop place unknown)
+        self.load([entry], "XRefLoader")
+
     def after_drop(self, entry, before):
         """Track a drop; the merge may also land a moment later."""
-        state = c4d.BaseContainer()
-        c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_SHIFT, state)
-        shift = bool(state.GetInt32(c4d.BFM_INPUT_QUALIFIER) & c4d.QSHIFT)
+        shift = widgets.shift_held()
         handled = True  # also on errors, those are shown by the guard
         try:
             handled = self._handle_drop(entry, before, shift)
@@ -901,9 +911,9 @@ class LibraryDialog(AyonDialog):
     def _handle_drop(self, entry, before, shift):
         """Make what Cinema 4D merged from a dropped file a container.
 
-        Shift held at the drop: Cinema 4D opens the file instead (Shift
-        reverses Merge on Drag & Drop), it is closed again and the product
-        loaded as XRef.
+        Shift held at the drop is normally caught before (`xref_drop`).
+        If Cinema 4D still got the file it opened or merged it: the result
+        is turned into an XRef.
 
         Returns:
             bool: True when the drop was handled (or can't be anymore).
