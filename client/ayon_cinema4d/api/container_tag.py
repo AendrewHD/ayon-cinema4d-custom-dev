@@ -30,7 +30,8 @@ def _icon():
         clip.SetColor(32, 34, 40, 255)
         clip.FillEllipse(10, 10, 21, 21)
         clip.EndDraw()
-        return clip.GetBitmap()
+        # The clip map owns its bitmap, keep a copy
+        return clip.GetBitmap().GetClone()
     except Exception:
         return None
 
