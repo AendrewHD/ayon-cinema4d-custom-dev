@@ -496,7 +496,7 @@ class ProductArea(c4d.gui.GeUserArea):
             if result == "release":
                 self.dialog.guard(self.dialog.xref_drop, entry)
                 return
-            if result == "cancel":
+            if result == "cancel" or not widgets.mouse_down():
                 self.dialog.guard(self.dialog.end_drop)
                 return
 
@@ -901,7 +901,7 @@ class LibraryDialog(AyonDialog):
 
     def after_drop(self, entry, before):
         """Track a drop; the merge may also land a moment later."""
-        shift = widgets.shift_held()
+        shift = widgets.shift_pressed()
         handled = True  # also on errors, those are shown by the guard
         try:
             handled = self._handle_drop(entry, before, shift)
