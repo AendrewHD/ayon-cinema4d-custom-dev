@@ -146,42 +146,56 @@ def shift_held():
     return bool(state.GetInt32(c4d.BFM_INPUT_QUALIFIER) & c4d.QSHIFT)
 
 
-def start_os_file_drag(paths, withhold=None):
+def start_os_file_drag(paths, cancel_when=None):
     """Drag files like from Explorer (OS drag via Qt), returns on drop.
 
     Cinema 4D handles the drop natively: merge in the Object Manager /
-    viewport, image nodes in the Node Editor.
+    viewport, image nodes in the Node Editor. The target reads the files
+    when the cursor enters, so the only way to keep them is to cancel.
 
     Args:
         paths (list[str]): Files to drag.
-        withhold (callable): Asked when the drop target reads the files;
-            True hands over no files, so the target does nothing.
+        cancel_when (callable): Polled during the drag, True cancels it
+            (nothing is dropped).
 
     Returns:
-        tuple[bool, bool]: Dropped (accepted by the target), withheld.
+        tuple[bool, bool]: Dropped (accepted by the target), cancelled.
     """
     global _drag_source
     from qtpy import QtCore, QtGui, QtWidgets
 
-    class MimeData(QtCore.QMimeData):
-        withheld = False
-
-        def retrieveData(self, mime_type, preferred_type):
-            if withhold is not None and withhold():
-                self.withheld = True
-                return None
-            self.withheld = False
-            return super().retrieveData(mime_type, preferred_type)
-
     if _drag_source is None:
         _drag_source = QtWidgets.QWidget()
-    mime = MimeData()
+    mime = QtCore.QMimeData()
     mime.setUrls([QtCore.QUrl.fromLocalFile(path) for path in paths])
     drag = QtGui.QDrag(_drag_source)
     drag.setMimeData(mime)
+
+    cancelled = []
+    timer = QtCore.QTimer()
+    timer.setInterval(15)
+
+    def poll():
+        if not cancelled and cancel_when():
+            cancelled.append(True)
+            QtGui.QDrag.cancel()  # Qt runs during the OS drag loop
+
+    if cancel_when is not None:
+        timer.timeout.connect(poll)
+        timer.start()
     exec_ = getattr(drag, "exec", None) or drag.exec_
-    action = exec_(QtCore.Qt.CopyAction)
-    return action != QtCore.Qt.IgnoreAction, mime.withheld
+    try:
+        action = exec_(QtCore.Qt.CopyAction)
+    finally:
+        timer.stop()
+    return action != QtCore.Qt.IgnoreAction, bool(cancelled)
+
+
+def shift_pressed():
+    """Shift state from the OS, also valid inside the OS drag loop."""
+    from qtpy import QtCore, QtGui
+    modifiers = QtGui.QGuiApplication.queryKeyboardModifiers()
+    return bool(modifiers & QtCore.Qt.ShiftModifier)
 
 
 def confirm(text):
