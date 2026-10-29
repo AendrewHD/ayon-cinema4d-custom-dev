@@ -228,27 +228,27 @@ def shift_pressed():
     return down
 
 
-def wait_for_release(status=None):
-    """After a cancelled drag, follow the held mouse button.
+def wait_for_release(shift_text, plain_text):
+    """After a cancelled drag, follow the held mouse button to its release.
 
     Returns:
-        str: 'release' (button let go with Shift held), 'resume' (Shift
-            let go, button still down) or 'cancel' (Escape).
+        str: 'shift' (released with Shift), 'plain' (without) or 'cancel'
+            (Escape). The status bar shows what a release would do.
     """
-    if status:
-        c4d.StatusSetText(status)
+    shown = None
     try:
-        while True:
-            if not mouse_down():
-                return "release"
-            if not shift_pressed():
-                return "resume"
+        while mouse_down():
+            shift = shift_pressed()
+            if shift is not shown:
+                c4d.StatusSetText(shift_text if shift else plain_text)
+                shown = shift
             escape = _key_down(VK_ESCAPE)
             if escape is None:
                 escape = _c4d_down(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_ESC)
             if escape:
                 return "cancel"
             time.sleep(0.01)
+        return "shift" if shift_pressed() else "plain"
     finally:
         c4d.StatusClear()
 
