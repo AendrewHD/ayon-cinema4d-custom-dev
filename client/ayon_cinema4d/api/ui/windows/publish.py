@@ -1,23 +1,30 @@
 """Publish: native panel for the publish instances of the active document.
 
-Lists the instances (toggle active, select, remove), creates new ones with
-default options and opens the AYON Publisher for validation and publishing,
-which stays a Qt window.
+Lists the instances (toggle active, select, remove), edits the variant and
+the creator / publish attributes of the selected instance, creates new ones
+with default options and publishes through the AYON Publisher (Qt), which
+starts publishing by itself.
 """
+import inspect
 import logging
 
 import c4d
+import ayon_api
+from qtpy import QtCore
 
 from ayon_core.pipeline import registered_host
+from ayon_core.tools.utils import host_tools
 from ayon_core.pipeline.create import CreateContext
 
 from ayon_cinema4d.api import lib, plugin
+from ayon_cinema4d.api.lib import get_main_window
 from ayon_cinema4d.api.ui import events, ids, widgets
+from ayon_cinema4d.api.ui.attributes import AttributeEditor
 from ayon_cinema4d.api.ui.dialog import AyonDialog
 from ayon_cinema4d.api.ui.registry import Command
 from ayon_cinema4d.api.ui.tree import Column, Item, TreeModel
 
-from .classic import show_publisher
+from .classic import center_on_first_show
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +35,13 @@ ID_CREATE_QT = 1003
 ID_REFRESH = 1004
 ID_SUMMARY = 1005
 ID_SAVE = 1006
+ID_OPEN_PUBLISHER = 1007
+ID_ATTRS_SCROLL = 1008
+ID_ATTRS = 1009
+ID_VARIANT = 1010
+ID_VARIANT_PRESETS = 1011
+ID_VARIANT_SET = 1012
+ID_ATTR_FIRST = 5000
 
 CHECK_INTERVAL = 1000  # ms
 
@@ -49,6 +63,47 @@ def _default_variant(creator):
     return variants[0]
 
 
+def _product_name(create_context, instance, variant):
+    """Product name of `instance` with a new variant (like the Publisher)."""
+    creator = create_context.creators[instance.creator_identifier]
+    project_name = create_context.get_current_project_name()
+    folder = create_context.get_folder_entity(instance["folderPath"])
+    if folder is None:
+        raise ValueError(f"Folder not found: {instance['folderPath']}")
+    task = None
+    if instance.get("task"):
+        task = create_context.get_task_entity(
+            instance["folderPath"], instance["task"])
+    kwargs = {
+        "host_name": create_context.host_name,
+        "instance": instance,
+        "project_entity": ayon_api.get_project(project_name),
+        "product_type": instance.get("productType"),
+    }
+    # Older creators don't take all keyword arguments
+    params = inspect.signature(creator.get_product_name).parameters
+    if not any(p.kind == p.VAR_KEYWORD for p in params.values()):
+        kwargs = {k: v for k, v in kwargs.items() if k in params}
+    return creator.get_product_name(
+        project_name, folder, task, variant, **kwargs)
+
+
+def _start_publish_when_ready(window):
+    """Press the Publisher's publish button after its next reset."""
+    window._ayon_c4d_autopublish = True
+    if getattr(window, "_ayon_c4d_autopublish_hooked", False):
+        return
+    window._ayon_c4d_autopublish_hooked = True
+
+    def on_reset(*_args):
+        if getattr(window, "_ayon_c4d_autopublish", False):
+            window._ayon_c4d_autopublish = False
+            QtCore.QTimer.singleShot(0, window._on_publish_clicked)
+
+    window._controller.register_event_callback(
+        "controller.reset.finished", on_reset)
+
+
 def _scene_signature(doc):
     return (id(doc), tuple(
         (creator_id, obj.GetName())
@@ -68,6 +123,10 @@ class PublishDialog(AyonDialog):
         self.create_context = None
         self._signature = None
         self._scene_dirty = False
+        self._attrs_dirty = False
+        self._full_reset = True
+        self._attr_instance_id = None
+        self.attributes = None
         self.model = TreeModel(
             [
                 Column("active", "", width=24, checkbox=True),
@@ -81,6 +140,7 @@ class PublishDialog(AyonDialog):
         )
         self.model.lead_column = 2  # swatch on the product, not the checkbox
         self.model.on_check = self._on_check
+        self.model.on_select = lambda items: self._build_attributes()
         self.model.on_double_click = lambda item: self.select_nodes([item])
         self.model.context_menu = self._context_menu
         self.model.on_delete = self.remove
@@ -88,14 +148,23 @@ class PublishDialog(AyonDialog):
     # -- layout ----------------------------------------------------------
     def build(self):
         self.add_tree(ID_TREE, self.model, min_size=(300, 120))
-        if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=6):
+        self.ScrollGroupBegin(
+            ID_ATTRS_SCROLL, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT,
+            c4d.SCROLLGROUP_VERT | c4d.SCROLLGROUP_AUTOVERT, inith=160)
+        self.GroupBegin(ID_ATTRS, c4d.BFH_SCALEFIT | c4d.BFV_TOP, cols=1)
+        self.GroupEnd()
+        self.GroupEnd()
+        if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=4):
             self.AddButton(ID_CREATE, c4d.BFH_LEFT, name="Create...")
             self.AddButton(ID_CREATE_QT, c4d.BFH_LEFT, name="Create (Qt)...")
             self.AddButton(ID_REFRESH, c4d.BFH_LEFT, name="Refresh")
             self.AddStaticText(ID_SUMMARY, c4d.BFH_SCALEFIT, name="")
-            self.AddButton(ID_SAVE, c4d.BFH_RIGHT, name="Save")
-            self.AddButton(ID_PUBLISH, c4d.BFH_RIGHT, 120, 0,
-                           name="Publish...")
+        self.GroupEnd()
+        if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=3):
+            self.AddButton(ID_SAVE, c4d.BFH_LEFT, name="Save")
+            self.AddButton(ID_OPEN_PUBLISHER, c4d.BFH_SCALEFIT,
+                           name="Open Publisher")
+            self.AddButton(ID_PUBLISH, c4d.BFH_SCALEFIT, name="Publish")
         self.GroupEnd()
 
     def InitValues(self):
@@ -109,14 +178,50 @@ class PublishDialog(AyonDialog):
         self._signature = _scene_signature(doc)
         self._scene_dirty = False
         host = registered_host()
-        # Publish plug-ins are discovered by the Publisher, not needed here
         if self.create_context is None:
             self.create_context = CreateContext(host, reset=False)
-        self.create_context.reset(discover_publish_plugins=False)
+        if self._full_reset:
+            # Publish plug-ins only for the publish attributes, the scene
+            # watching below re-collects instances only
+            self._full_reset = False
+            self.create_context.reset(discover_publish_plugins=True)
+        else:
+            self._reload_instances()
         context = host.get_current_context()
         self.set_context_text(
             f"  {context['folder_path']}  /  {context['task_name']}")
         self._fill()
+
+    def _reload_instances(self):
+        """Re-collect instances, keep the discovered plug-ins."""
+        ctx = self.create_context
+        required = (
+            "reset_preparation", "reset_current_context",
+            "reset_context_data", "bulk_add_instances", "reset_instances",
+            "find_convertor_items", "execute_autocreators",
+            "reset_finalization",
+        )
+        if not all(hasattr(ctx, name) for name in required):
+            ctx.reset(discover_publish_plugins=True)  # other ayon-core
+            return
+        ctx.reset_preparation()  # also clears the event callbacks
+        # Re-register what reset_plugins() would register
+        for creator in ctx.creators.values():
+            creator.register_callbacks()
+        for plugin in getattr(ctx, "plugins_with_defs", []):
+            plugin.register_create_context_callbacks(ctx)
+        ctx.reset_current_context()
+        ctx.reset_context_data()
+        with ctx.bulk_add_instances():
+            ctx.reset_instances()
+            ctx.find_convertor_items()
+            ctx.execute_autocreators()
+        ctx.reset_finalization()
+
+    def on_events(self, kinds):
+        if events.CONTEXT in kinds:
+            self._full_reset = True
+        self.refresh()
 
     def _fill(self):
         context = registered_host().get_current_context()
@@ -157,11 +262,95 @@ class PublishDialog(AyonDialog):
             summary += "  -  unsaved changes"
         self.SetString(ID_SUMMARY, summary)
         self.Enable(ID_PUBLISH, active > 0)
+        self._build_attributes()
+
+    # -- attributes ------------------------------------------------------
+    def _selected_instance(self):
+        items = self.model.selected_items()
+        return items[0].data if len(items) == 1 else None
+
+    def _build_attributes(self):
+        instance = self._selected_instance()
+        self.LayoutFlushGroup(ID_ATTRS)
+        self.attributes = AttributeEditor(self, ID_ATTR_FIRST)
+        self.attributes.on_change = self._on_attribute_change
+        self._attr_instance_id = instance.id if instance else None
+        if instance is None:
+            self.AddStaticText(
+                0, c4d.BFH_SCALEFIT,
+                name="Select one instance to edit its settings.")
+            self.LayoutChanged(ID_ATTRS)
+            return
+
+        creator = self.create_context.creators.get(
+            instance.creator_identifier)
+        if creator is not None and "variant" in instance:
+            self.AddStaticText(
+                0, c4d.BFH_SCALEFIT, name="Product",
+                borderstyle=c4d.BORDER_WITH_TITLE_BOLD)
+            if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=4):
+                self.GroupBorderSpace(8, 0, 0, 4)
+                self.AddStaticText(0, c4d.BFH_LEFT, name="Variant")
+                self.AddEditText(ID_VARIANT, c4d.BFH_SCALEFIT, 160, 0)
+                self.AddButton(ID_VARIANT_PRESETS, c4d.BFH_RIGHT, 30, 0,
+                               name="...")
+                self.AddButton(ID_VARIANT_SET, c4d.BFH_RIGHT, name="Set")
+            self.GroupEnd()
+            self.SetString(ID_VARIANT, instance.get("variant") or "")
+
+        self.attributes.add_section(
+            getattr(creator, "label", "Creator"),
+            instance.creator_attributes)
+        for plugin_name, values in instance.publish_attributes.items():
+            if getattr(values, "attr_defs", None):
+                self.attributes.add_section(plugin_name, values)
+        self.LayoutChanged(ID_ATTRS)
+
+    def _on_attribute_change(self, values, key, value):
+        self._attrs_dirty = True  # saved by the Timer, not per keystroke
+
+    def _variant_presets(self):
+        instance = self._selected_instance()
+        creator = instance and self.create_context.creators.get(
+            instance.creator_identifier)
+        variants = list(getattr(creator, "default_variants", None) or [])
+        if not variants:
+            widgets.popup([("No default variants", None)])
+            return
+
+        def pick(variant):
+            self.SetString(ID_VARIANT, variant)
+            self.set_variant(variant)
+
+        widgets.popup([(v, lambda v=v: pick(v)) for v in variants])
+
+    def set_variant(self, variant=None):
+        instance = self._selected_instance()
+        if instance is None:
+            return
+        variant = (variant or self.GetString(ID_VARIANT)).strip()
+        if not variant or variant == instance.get("variant"):
+            return
+        product_name = _product_name(self.create_context, instance, variant)
+        instance["variant"] = variant
+        instance["productName"] = product_name
+        self._save_changes()
+        self._fill()
+        self.set_status(f"Product renamed to {product_name}")
 
     def on_document_change(self):
         self._scene_dirty = True
 
+    def AskClose(self):
+        if self._attrs_dirty:
+            self._attrs_dirty = False
+            self.guard(self._save_changes)
+        return False
+
     def Timer(self, msg):
+        if self._attrs_dirty:
+            self._attrs_dirty = False
+            self.guard(self._save_changes)
         if not self._scene_dirty or widgets.is_playing():
             return
         self._scene_dirty = False
@@ -226,14 +415,36 @@ class PublishDialog(AyonDialog):
         widgets.popup(entries)
 
     def show_create_qt(self):
-        show_publisher(tab="create")
+        self.open_publisher(tab="create", start=False)
+
+    def open_publisher(self, tab="publish", start=False):
+        """Show the Publisher with the saved state, optionally publish.
+
+        The Publisher resets when it is shown the first time (or after it
+        was closed); an open one is reset here. Publishing starts after the
+        reset, a missing comment or failed validation stays visible there.
+        """
+        self._attrs_dirty = False
+        self._save_changes()
+        window = host_tools.get_tool_by_name(
+            "publisher", parent=get_main_window())
+        if start and hasattr(window, "show_and_publish"):
+            # Public Publisher API: show, reset, press Publish
+            window.set_current_tab(tab)
+            window.show_and_publish()
+            center_on_first_show(window)
+            return
+        was_visible = window is not None and window.isVisible()
+        if start and window is not None and hasattr(window, "_controller"):
+            _start_publish_when_ready(window)  # older ayon-core
+        window = host_tools.show_publisher(
+            tab=tab, parent=get_main_window()) or window
+        center_on_first_show(window)
+        if was_visible and window is not None:
+            window.reset()
 
     def publish(self):
-        self._save_changes()
-        show_publisher(tab="publish")
-        # An open Publisher shows the old state until it is reset
-        from ayon_cinema4d.api.pipeline import _reset_visible_publisher
-        _reset_visible_publisher()
+        self.open_publisher(tab="publish", start=True)
 
     def _context_menu(self, items):
         if not items:
@@ -246,17 +457,26 @@ class PublishDialog(AyonDialog):
             None,
             ("Remove...", lambda: self.remove(items)),
             None,
-            ("Open Publisher...", self.publish),
+            ("Open Publisher...", self.open_publisher),
         ]
 
     def on_command(self, gadget_id, msg):
+        if self.attributes is not None and self.attributes.command(gadget_id):
+            return
         if gadget_id == ID_PUBLISH:
             self.publish()
+        elif gadget_id == ID_OPEN_PUBLISHER:
+            self.open_publisher()
+        elif gadget_id == ID_VARIANT_SET:
+            self.set_variant()
+        elif gadget_id == ID_VARIANT_PRESETS:
+            self._variant_presets()
         elif gadget_id == ID_CREATE:
             self.show_create_menu()
         elif gadget_id == ID_CREATE_QT:
             self.show_create_qt()
         elif gadget_id == ID_REFRESH:
+            self._full_reset = True
             self.refresh()
         elif gadget_id == ID_SAVE:
             c4d.CallCommand(12098)  # Save
@@ -266,6 +486,6 @@ class PublishDialog(AyonDialog):
 COMMANDS = [
     Command(
         ids.PUBLISH, "Publish...", order=20, dialog=PublishDialog,
-        help="Publish instances of the document, opens the Publisher",
+        help="Publish instances of the document",
     ),
 ]
