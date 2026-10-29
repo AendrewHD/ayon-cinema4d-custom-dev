@@ -41,6 +41,7 @@ from ayon_core.pipeline import install_host  # noqa: E402
 from ayon_core.lib import is_headless_mode_enabled  # noqa: E402
 from ayon_cinema4d.api import Cinema4DHost  # noqa: E402
 from ayon_cinema4d.api import doc_context  # noqa: E402
+from ayon_cinema4d.api import handoff  # noqa: E402
 from ayon_cinema4d.api.ui import events, ids, registry  # noqa: E402
 
 log = logging.getLogger("ayon_cinema4d")
@@ -56,7 +57,16 @@ class DocumentWatcher(c4d.plugins.MessageData):
         self._doc = None
         self._path = None
 
+    def GetTimer(self):
+        return 1000  # MSG_TIMER for the launch handoff
+
     def CoreMessage(self, id, bc):
+        if id == c4d.MSG_TIMER:
+            try:
+                handoff.tick()
+            except Exception:
+                log.debug("AYON handoff tick failed", exc_info=True)
+            return True
         if id != c4d.EVMSG_CHANGE:
             return True
 
@@ -111,6 +121,8 @@ def PluginMessage(id, data):
     """Entry point to add menu items to Cinema4D"""
     if id == c4d.C4DPL_BUILDMENU:
         install_menu()
+    elif id == c4d.C4DPL_ENDACTIVITY:
+        handoff.remove_heartbeat()
     elif id == c4d.C4DPL_PROGRAM_STARTED and is_interactive():
         # Empty task: start in the first workfile version, not 'Untitled'
         from ayon_cinema4d.api import workfiles
