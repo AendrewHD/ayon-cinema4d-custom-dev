@@ -137,6 +137,28 @@ def is_playing():
     return c4d.CheckIsRunning(c4d.CHECKISRUNNING_ANIMATIONRUNNING)
 
 
+_drag_source = None
+
+
+def start_os_file_drag(paths):
+    """Drag files like from Explorer (OS drag via Qt), returns on drop.
+
+    Cinema 4D handles the drop natively: merge in the Object Manager /
+    viewport, image nodes in the Node Editor.
+    """
+    global _drag_source
+    from qtpy import QtCore, QtGui, QtWidgets
+
+    if _drag_source is None:
+        _drag_source = QtWidgets.QWidget()
+    mime = QtCore.QMimeData()
+    mime.setUrls([QtCore.QUrl.fromLocalFile(path) for path in paths])
+    drag = QtGui.QDrag(_drag_source)
+    drag.setMimeData(mime)
+    exec_ = getattr(drag, "exec", None) or drag.exec_
+    return exec_(QtCore.Qt.CopyAction)
+
+
 def confirm(text):
     return c4d.gui.QuestionDialog(text)
 
