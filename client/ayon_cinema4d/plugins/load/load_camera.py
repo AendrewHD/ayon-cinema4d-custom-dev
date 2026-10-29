@@ -89,7 +89,7 @@ class CameraLoader(plugin.Cinema4DLoader):
         filepath = self.filepath_from_context(context)
         camera = self._merge_camera(filepath, doc)
 
-        doc.InsertObject(camera)
+        lib.insert_object(doc, camera)
         camera.SetName(str(basename))
 
         # Set the camera as the active camera

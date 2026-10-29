@@ -332,7 +332,7 @@ class Cinema4DSingleObjLoader(Cinema4DLoader, ABC):
         # Create object
         obj = c4d.BaseObject(self._node_type_id)
         obj.SetName(name)
-        doc.InsertObject(obj)
+        lib.insert_object(doc, obj)
 
         self.set_obj_for_context(obj, context)
 

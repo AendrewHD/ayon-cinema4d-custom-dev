@@ -795,3 +795,85 @@ def add_project_tag(project_name, tag_name):
         project_name, tags=tags + [{"name": tag_name, "color": TAG_COLOR}]
     )
     return True
+
+
+# Preferences > Interface > "Insert Objects at", see `insert_object`.
+# Values from the Python symbols, the fallbacks are the pre-2023 cycle ids.
+INSERT_TOP = getattr(c4d, "PREF_INTERFACE_I_TOP", 0)
+INSERT_PREV = getattr(c4d, "PREF_INTERFACE_I_PREV", 1)
+INSERT_NEXT = getattr(c4d, "PREF_INTERFACE_I_NEXT", 2)
+INSERT_PARENT = getattr(c4d, "PREF_INTERFACE_I_PARENT", 3)
+INSERT_CHILD = getattr(c4d, "PREF_INTERFACE_I_CHILD", 4)
+INSERT_ROOT = getattr(c4d, "PREF_INTERFACE_I_ROOT", 5)
+INSERT_BOTTOM = getattr(c4d, "PREF_INTERFACE_I_BOTTOM", 6)
+
+
+def get_insert_mode():
+    """The 'Insert Objects at' preference."""
+    prefs = c4d.GetWorldContainerInstance()
+    return prefs.GetInt32(c4d.WPREF_INSERTAT, INSERT_TOP)
+
+
+def insert_object(doc, obj, adopt_selection=False):
+    """Insert `obj` like a new object from the Create menu.
+
+    Follows Preferences > Interface > Insert Objects at. Like Cinema 4D, the
+    relative modes need exactly one selected object, otherwise the object
+    goes to the top (or bottom).
+
+    Args:
+        doc (c4d.documents.BaseDocument): Document.
+        obj (c4d.BaseObject): Object, not yet in a document.
+        adopt_selection (bool): 'Parent' moves the selected object under
+            `obj`. Off for groups whose children a loader replaces on
+            update, then 'Parent' inserts after the selected object.
+    """
+    mode = get_insert_mode()
+    selected = doc.GetActiveObjects(c4d.GETACTIVEOBJECTFLAGS_NONE)
+    target = selected[0] if len(selected) == 1 else None
+
+    if mode == INSERT_BOTTOM or (mode == INSERT_ROOT and target is None):
+        last = doc.GetFirstObject()
+        while last is not None and last.GetNext() is not None:
+            last = last.GetNext()
+        if last is None or mode != INSERT_BOTTOM:
+            doc.InsertObject(obj)
+        else:
+            obj.InsertAfter(last)
+    elif target is None or mode == INSERT_TOP:
+        doc.InsertObject(obj)
+    elif mode == INSERT_PREV:
+        obj.InsertBefore(target)
+    elif mode == INSERT_NEXT:
+        obj.InsertAfter(target)
+    elif mode == INSERT_CHILD:
+        obj.InsertUnder(target)
+    elif mode == INSERT_ROOT:
+        root = target
+        while root.GetUp() is not None:
+            root = root.GetUp()
+        obj.InsertAfter(root)
+    elif mode == INSERT_PARENT and adopt_selection:
+        obj.InsertBefore(target)
+        doc.AddUndo(c4d.UNDOTYPE_CHANGE, target)
+        matrix = target.GetMg()
+        target.Remove()
+        target.InsertUnder(obj)
+        target.SetMg(matrix)
+    elif mode == INSERT_PARENT:
+        obj.InsertAfter(target)
+    else:
+        doc.InsertObject(obj)
+    doc.AddUndo(c4d.UNDOTYPE_NEW, obj)
+
+
+def insert_objects(doc, objects):
+    """Insert several objects at the preferred place, in order."""
+    previous = None
+    for obj in objects:
+        if previous is None:
+            insert_object(doc, obj)
+        else:
+            obj.InsertAfter(previous)
+            doc.AddUndo(c4d.UNDOTYPE_NEW, obj)
+        previous = obj

@@ -72,8 +72,8 @@ class MergeLoader(plugin.Cinema4DLoader):
         with lib.undo_chunk():
             group = c4d.BaseObject(c4d.Onull)
             group.SetName(f"{namespace}_{name}")
-            doc.InsertObject(group)
-            doc.AddUndo(c4d.UNDOTYPE_NEW, group)
+            # The group's children are replaced on update: no adopting
+            lib.insert_object(doc, group, adopt_selection=False)
             self._merge(doc, filepath, group)
 
         container = pipeline.containerise(
