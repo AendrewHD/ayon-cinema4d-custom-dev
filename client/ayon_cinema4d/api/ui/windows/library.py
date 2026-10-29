@@ -466,16 +466,7 @@ class ProductArea(c4d.gui.GeUserArea):
                 # The Object Manager / viewport only take scene files from
                 # an OS drag (like Explorer), not from a dialog drag
                 if self._drag_started(x, y):
-                    self.dialog.force_merge_on_drop()
-                    # Shift during the drag: cancel it (Cinema 4D would
-                    # import the file), the product is loaded as XRef
-                    _, xref = widgets.start_os_file_drag(
-                        [entry.path], cancel_when=widgets.shift_pressed)
-                    if xref:
-                        self.dialog.guard(self.dialog.xref_drop, entry)
-                    else:
-                        self.dialog.guard(
-                            self.dialog.after_drop, entry, before)
+                    self._scene_drag(entry, before)
                     return True
             elif self.HandleMouseDrag(
                 msg, _drag_type(entry.path), entry.path, 0
@@ -485,6 +476,29 @@ class ProductArea(c4d.gui.GeUserArea):
         if not qualifier and len(self.selected) > 1:
             self._select(index, 0)  # plain click in a multi selection
         return True
+
+    def _scene_drag(self, entry, before):
+        """OS drag of a scene file, Shift held at the release -> XRef.
+
+        Cinema 4D reads the files when the cursor enters and imports on
+        release, so the drag is cancelled while Shift is held and the
+        button followed by hand; letting Shift go resumes the drag.
+        """
+        self.dialog.force_merge_on_drop()
+        while True:
+            _, shifted = widgets.start_os_file_drag(
+                [entry.path], cancel_when=widgets.shift_pressed)
+            if not shifted:
+                self.dialog.guard(self.dialog.after_drop, entry, before)
+                return
+            result = widgets.wait_for_release(
+                "AYON: release to load as XRef, let go of Shift to merge")
+            if result == "release":
+                self.dialog.guard(self.dialog.xref_drop, entry)
+                return
+            if result == "cancel":
+                self.dialog.guard(self.dialog.end_drop)
+                return
 
     def _drag_started(self, x, y, distance=6):
         """Follow the pressed mouse, True once it moved `distance` px."""
@@ -861,14 +875,14 @@ class LibraryDialog(AyonDialog):
     def force_merge_on_drop(self):
         """Native merge at the drop place instead of opening the file.
 
-        Restored once the drop is handled (see `_end_drop`).
+        Restored once the drop is handled (see `end_drop`).
         """
         if self._merge_on_drop is None:
             current = lib.get_merge_on_drop()
             if current is False and lib.set_merge_on_drop(True):
                 self._merge_on_drop = current
 
-    def _end_drop(self):
+    def end_drop(self):
         self._pending_drop = None
         self.SetTimer(0)
         if self._merge_on_drop is not None:
@@ -876,12 +890,12 @@ class LibraryDialog(AyonDialog):
             self._merge_on_drop = None
 
     def DestroyWindow(self):
-        self._end_drop()
+        self.end_drop()
         super().DestroyWindow()
 
     def xref_drop(self, entry):
-        """Shift-drag: load as XRef, the drag was cancelled before a drop."""
-        self._end_drop()
+        """Shift-drop: load as XRef, the drag was cancelled before a drop."""
+        self.end_drop()
         # Placed by Preferences > Insert Objects at (drop place unknown)
         self.load([entry], "XRefLoader")
 
@@ -893,7 +907,7 @@ class LibraryDialog(AyonDialog):
             handled = self._handle_drop(entry, before, shift)
         finally:
             if handled:
-                self._end_drop()
+                self.end_drop()
             else:
                 self._pending_drop = (entry, before, shift, time.time())
                 self.SetTimer(DROP_CHECK_INTERVAL)
@@ -901,18 +915,18 @@ class LibraryDialog(AyonDialog):
     def Timer(self, msg):
         pending = self._pending_drop
         if pending is None:
-            self._end_drop()
+            self.end_drop()
             return
         entry, before, shift, started = pending
         found = self.guard(self._handle_drop, entry, before, shift)
         # None: failed, shown by the guard
         if found is not False or time.time() - started > DROP_CHECK_TIMEOUT:
-            self._end_drop()
+            self.end_drop()
 
     def _handle_drop(self, entry, before, shift):
         """Make what Cinema 4D merged from a dropped file a container.
 
-        Shift during the drag is normally caught before (`xref_drop`).
+        Shift at the release is normally caught before (`xref_drop`).
         If Cinema 4D still got the file it opened or merged it: the result
         is turned into an XRef.
 
