@@ -1,7 +1,7 @@
-"""Dockable 'Publish Status' dialog.
+"""Publish status of the active document (see `ui/windows/publish_status`).
 
-Shows for the active document: what was published from this workfile, the
-task's latest workfile publish and outdated loaded containers.
+What was published from this workfile, the task's latest workfile publish
+and outdated loaded containers.
 """
 import os
 import logging
@@ -15,11 +15,6 @@ from ayon_core.pipeline import registered_host
 from . import doc_context
 
 log = logging.getLogger(__name__)
-
-ID_REFRESH = 1000
-ID_HEADER = 1001
-ID_ROWS = 1002
-
 
 def _time(value):
     """Server timestamp -> local 'YYYY-MM-DD HH:MM'."""
@@ -131,77 +126,3 @@ def _container_rows(project_name, host):
     if outdated:
         text += f", {len(outdated)} outdated (AYON > Manage...)"
     return [text]
-
-
-class PublishStatusDialog(c4d.gui.GeDialog):
-
-    def __init__(self):
-        super().__init__()
-        self._rows = []
-
-    def CreateLayout(self):
-        self.SetTitle("AYON Publish Status")
-        self.GroupBorderSpace(6, 6, 6, 6)
-        if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=2):
-            self.AddStaticText(ID_HEADER, c4d.BFH_SCALEFIT, name="")
-            self.AddButton(ID_REFRESH, c4d.BFH_RIGHT, name="Refresh")
-        self.GroupEnd()
-        self.AddSeparatorH(0)
-        self.ScrollGroupBegin(
-            0, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT,
-            c4d.SCROLLGROUP_VERT | c4d.SCROLLGROUP_AUTOVERT)
-        self.GroupBegin(ID_ROWS, c4d.BFH_SCALEFIT | c4d.BFV_TOP, cols=1)
-        self.GroupEnd()
-        self.GroupEnd()
-        return True
-
-    def InitValues(self):
-        self.update()
-        return True
-
-    def Command(self, id, msg):
-        if id == ID_REFRESH:
-            self.update()
-        return True
-
-    def update(self):
-        try:
-            header, rows = get_status(c4d.documents.GetActiveDocument())
-        except Exception as error:
-            log.warning("Publish status failed", exc_info=True)
-            header, rows = "", [f"Error: {error}"]
-
-        self.SetString(ID_HEADER, header)
-        self.LayoutFlushGroup(ID_ROWS)
-        for i, row in enumerate(rows):
-            self.AddStaticText(ID_ROWS + 1 + i, c4d.BFH_SCALEFIT, name=row)
-        self.LayoutChanged(ID_ROWS)
-
-
-_dialog = None
-
-
-def _get_dialog():
-    global _dialog
-    if _dialog is None:
-        _dialog = PublishStatusDialog()
-    return _dialog
-
-
-def open_dialog(plugin_id):
-    dialog = _get_dialog()
-    if dialog.IsOpen():
-        dialog.update()
-        return True
-    return dialog.Open(
-        c4d.DLG_TYPE_ASYNC, pluginid=plugin_id, defaultw=420, defaulth=180)
-
-
-def restore_dialog(plugin_id, sec_ref):
-    return _get_dialog().Restore(pluginid=plugin_id, secret=sec_ref)
-
-
-def refresh():
-    """Update the dialog if it is open."""
-    if _dialog is not None and _dialog.IsOpen():
-        _dialog.update()

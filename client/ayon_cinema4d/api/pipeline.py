@@ -309,3 +309,5 @@ def on_task_changed():
         )
         c4d.gui.UpdateMenus()
         _reset_visible_publisher()
+        from .ui import events
+        events.notify(events.CONTEXT)
