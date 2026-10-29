@@ -45,11 +45,12 @@ class AlembicLoader(plugin.Cinema4DLoader):
             context, name, namespace, doc=doc)
 
         loaded_doc = self._load_file(filepath)
-        nodes = []
-        for obj in loaded_doc.GetObjects():
-            obj.Remove()  # remove from original document
-            doc.InsertObject(obj, checknames=True)
-            nodes.append(obj)
+        nodes = loaded_doc.GetObjects()
+        with lib.undo_chunk():
+            for obj in nodes:
+                obj.Remove()  # remove from original document
+            # Preferences > Interface > Insert Objects at
+            lib.insert_objects(doc, nodes)
 
         # TODO: Also containerize all children objects to ensure we keep them
         #   linked explicitly

@@ -30,7 +30,7 @@ class XRefLoader(plugin.Cinema4DLoader):
 
         xref = c4d.BaseList2D(c4d.Oxref)
         xref.SetName(basename)
-        doc.InsertObject(xref)
+        lib.insert_object(doc, xref)
         xref.SetParameter(
             c4d.ID_CA_XREF_FILE,
             filepath,
