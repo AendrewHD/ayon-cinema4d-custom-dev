@@ -62,6 +62,8 @@ class QtDockDialog(AyonDialog):
         if rect and rect != self._last_rect:
             self._last_rect = rect
             self.guard(self.host.follow, *rect)
+        else:
+            self.guard(self.host.keep_on_top)
 
     def AskClose(self):
         self.host.release()
