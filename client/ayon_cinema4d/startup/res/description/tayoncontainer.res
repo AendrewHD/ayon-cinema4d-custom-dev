@@ -7,9 +7,10 @@ CONTAINER Tayoncontainer
 	{
 		GROUP
 		{
-			COLUMNS 2;
+			COLUMNS 3;
 			BUTTON AYON_UPDATE_LATEST { }
 			BUTTON AYON_OPEN_MANAGE { }
+			BUTTON AYON_OPEN_WEB { }
 		}
 	}
 }

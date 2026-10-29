@@ -5,6 +5,7 @@ enum
 {
 	AYON_UPDATE_LATEST = 1000,
 	AYON_OPEN_MANAGE = 1001,
+	AYON_OPEN_WEB = 1002,
 };
 
 #endif

@@ -3,4 +3,5 @@ STRINGTABLE Tayoncontainer
 	Tayoncontainer "AYON";
 	AYON_UPDATE_LATEST "Update to Latest";
 	AYON_OPEN_MANAGE "Open Manage";
+	AYON_OPEN_WEB "Open in AYON";
 }
