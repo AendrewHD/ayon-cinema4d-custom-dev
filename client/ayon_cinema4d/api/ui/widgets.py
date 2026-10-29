@@ -1,5 +1,6 @@
 """Drawing and popup helpers shared by the native windows."""
 import os
+import time
 import hashlib
 
 import c4d
@@ -189,6 +190,35 @@ def start_os_file_drag(paths, cancel_when=None):
     finally:
         timer.stop()
     return action != QtCore.Qt.IgnoreAction, bool(cancelled)
+
+
+def wait_for_release(status=None):
+    """After a cancelled drag, follow the held mouse button.
+
+    Returns:
+        str: 'release' (button let go with Shift held), 'resume' (Shift
+            let go, button still down) or 'cancel' (Escape).
+    """
+    if status:
+        c4d.StatusSetText(status)
+    try:
+        while True:
+            state = c4d.BaseContainer()
+            if not c4d.gui.GetInputState(
+                c4d.BFM_INPUT_MOUSE, c4d.BFM_INPUT_MOUSELEFT, state
+            ):
+                return "cancel"
+            if not state.GetInt32(c4d.BFM_INPUT_VALUE):
+                return "release"
+            if not shift_held():
+                return "resume"
+            if c4d.gui.GetInputState(
+                c4d.BFM_INPUT_KEYBOARD, c4d.KEY_ESC, state
+            ) and state.GetInt32(c4d.BFM_INPUT_VALUE):
+                return "cancel"
+            time.sleep(0.01)
+    finally:
+        c4d.StatusClear()
 
 
 def shift_pressed():
