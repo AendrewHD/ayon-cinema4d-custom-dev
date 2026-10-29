@@ -56,41 +56,80 @@ def get_drag_paths(project_name, version_ids):
 
 
 class _DragFilter(QtCore.QObject):
-    """Starts a file drag when selected rows are dragged."""
+    """Starts a file drag when selected items are dragged.
 
-    def __init__(self, browser_widget, view):
-        super().__init__(view)
+    Installed on the application: the grid view shows every item as a card
+    widget on top of the viewport, so the mouse events go to the cards (and
+    their child widgets), not to the viewport. Events are matched to a view
+    by widget ancestry and global position.
+    """
+
+    def __init__(self, browser_widget, views):
+        super().__init__(browser_widget)
         self._browser = browser_widget
-        self._view = view
-        self._start = None
+        self._views = views
+        self._start = None  # (view, global pos)
+
+    def _view_of(self, widget):
+        if not isinstance(widget, QtWidgets.QWidget):
+            return None
+        for view in self._views:
+            viewport = view.viewport()
+            if widget is viewport or viewport.isAncestorOf(widget):
+                return view
+        return None
 
     def eventFilter(self, obj, event):
         event_type = event.type()
+        if event_type not in (
+            QtCore.QEvent.MouseButtonPress,
+            QtCore.QEvent.MouseButtonRelease,
+            QtCore.QEvent.MouseMove,
+        ):
+            return False
+
+        if event_type == QtCore.QEvent.MouseButtonRelease:
+            self._start = None
+            return False
+
+        view = self._view_of(obj)
+        if view is None or not view.isVisible():
+            return False
+
+        global_pos = _global_pos(event)
         if event_type == QtCore.QEvent.MouseButtonPress:
             self._start = None
             if event.button() == QtCore.Qt.LeftButton:
-                self._start = event.pos()
-        elif event_type == QtCore.QEvent.MouseButtonRelease:
-            self._start = None
-        elif (
-            event_type == QtCore.QEvent.MouseMove
-            and self._start is not None
-            and event.buttons() & QtCore.Qt.LeftButton
-        ):
-            distance = (event.pos() - self._start).manhattanLength()
-            if distance < QtWidgets.QApplication.startDragDistance():
-                return False
-            index = self._view.indexAt(self._start)
-            self._start = None
-            selection = self._view.selectionModel()
-            if index.isValid() and selection.isRowSelected(
-                index.row(), index.parent()
-            ):
-                self._start_drag()
-                return True
-        return False
+                self._start = (view, global_pos)
+            return False
 
-    def _start_drag(self):
+        if self._start is None or not event.buttons() & QtCore.Qt.LeftButton:
+            return False
+        start_view, start_pos = self._start
+        if start_view is not view:
+            return False
+        distance = (global_pos - start_pos).manhattanLength()
+        if distance < QtWidgets.QApplication.startDragDistance():
+            return False
+
+        self._start = None
+        index = view.indexAt(view.viewport().mapFromGlobal(start_pos))
+        if not index.isValid():
+            return False
+        # The grid selects column 0 only, `isRowSelected` needs all columns
+        index = index.sibling(index.row(), 0)
+        selection = view.selectionModel()
+        if not selection.isSelected(index):
+            # Card child widgets may swallow the click that selects
+            selection.select(
+                index,
+                QtCore.QItemSelectionModel.ClearAndSelect
+                | QtCore.QItemSelectionModel.Rows,
+            )
+        self._start_drag(view)
+        return True
+
+    def _start_drag(self, view):
         project_name = self._browser._controller.current_project
         version_ids = self._browser._get_selected_version_ids()
         if not project_name or not version_ids:
@@ -102,9 +141,17 @@ class _DragFilter(QtCore.QObject):
 
         mime = QtCore.QMimeData()
         mime.setUrls([QtCore.QUrl.fromLocalFile(path) for path in paths])
-        drag = QtGui.QDrag(self._view)
+        drag = QtGui.QDrag(view)
         drag.setMimeData(mime)
-        drag.exec_(QtCore.Qt.CopyAction)
+        exec_ = getattr(drag, "exec", None) or drag.exec_
+        exec_(QtCore.Qt.CopyAction)
+
+
+def _global_pos(event):
+    """Global mouse position as QPoint (Qt5 and Qt6)."""
+    if hasattr(event, "globalPosition"):
+        return event.globalPosition().toPoint()
+    return event.globalPos()
 
 
 def install(window):
@@ -114,12 +161,15 @@ def install(window):
     if table is None or not hasattr(browser, "_get_selected_version_ids"):
         log.debug("Loader window has no Browser views, drag not added.")
         return
-    if getattr(browser, "_ayon_c4d_drag_filters", None):
+    if getattr(browser, "_ayon_c4d_drag_filter", None):
         return
 
-    filters = []
-    for view in (table.table, table.card_view):
-        drag_filter = _DragFilter(browser, view)
-        view.viewport().installEventFilter(drag_filter)
-        filters.append(drag_filter)
-    browser._ayon_c4d_drag_filters = filters
+    views = [
+        view for view in (
+            getattr(table, "table", None), getattr(table, "card_view", None)
+        )
+        if view is not None
+    ]
+    drag_filter = _DragFilter(browser, views)
+    QtWidgets.QApplication.instance().installEventFilter(drag_filter)
+    browser._ayon_c4d_drag_filter = drag_filter
