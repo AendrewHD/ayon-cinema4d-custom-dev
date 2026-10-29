@@ -1,11 +1,18 @@
+import os
+
 import c4d
 
 from ayon_cinema4d.api import lib, pipeline, plugin
 
+# Merged natively (keeps layers, takes links...), other formats are loaded
+# into their own document first: importers like USD rebuild the target
+# document when merging, so new objects can't be told apart.
+NATIVE_MERGE_EXTENSIONS = {"c4d"}
+
 
 def _uid(node):
-    """Hashable unique id of a node (stable while the document is open)."""
-    return bytes(node.FindUniqueID(c4d.MAXON_CREATOR_ID) or b"")
+    """Hashable id of a node, unique in its document."""
+    return lib.node_key(node)
 
 
 def _iter_material_users(doc):
@@ -37,6 +44,10 @@ class MergeLoader(plugin.Cinema4DLoader):
     def _merge(self, doc, filepath, group):
         """Merge `filepath` into `doc` and move new top objects under `group`.
         """
+        ext = os.path.splitext(filepath)[1].lower().lstrip(".")
+        if ext not in NATIVE_MERGE_EXTENSIONS:
+            return self._import(doc, filepath, group)
+
         old_objects = {_uid(obj) for obj in doc.GetObjects()}
         old_materials = {_uid(mat) for mat in doc.GetMaterials()}
 
@@ -62,6 +73,28 @@ class MergeLoader(plugin.Cinema4DLoader):
             mat for mat in doc.GetMaterials()
             if _uid(mat) not in old_materials
         ]
+
+    @staticmethod
+    def _import(doc, filepath, group):
+        """Load the file as own document and move its content over."""
+        loaded = c4d.documents.LoadDocument(
+            filepath,
+            c4d.SCENEFILTER_OBJECTS
+            | c4d.SCENEFILTER_MATERIALS
+            | c4d.SCENEFILTER_NOUNDO,
+        )
+        if loaded is None:
+            raise RuntimeError(f"Loading failed: {filepath}")
+        materials = loaded.GetMaterials()
+        for mat in materials:
+            mat.Remove()
+            doc.InsertMaterial(mat)
+            doc.AddUndo(c4d.UNDOTYPE_NEW, mat)
+        for obj in reversed(loaded.GetObjects()):
+            obj.Remove()
+            obj.InsertUnder(group)
+            doc.AddUndo(c4d.UNDOTYPE_NEW, obj)
+        return materials
 
     def load(self, context, name=None, namespace=None, options=None):
         filepath = self.filepath_from_context(context)

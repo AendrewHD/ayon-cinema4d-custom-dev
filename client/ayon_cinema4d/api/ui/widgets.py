@@ -40,6 +40,17 @@ def color_for(name):
     return _PALETTE[digest[0] % len(_PALETTE)]
 
 
+def mix(a, b, t):
+    """Blend color `a` towards `b` by `t` (0..1)."""
+    return a + (b - a) * t
+
+
+def tint(name, amount=0.18, base=None):
+    """Product-type color toned down into the background."""
+    base = base if base is not None else c4d.Vector(0.19)
+    return mix(base, color_for(name), amount)
+
+
 def contrast_text(color):
     luminance = color.x * 0.299 + color.y * 0.587 + color.z * 0.114
     return c4d.Vector(0.08) if luminance > 0.55 else c4d.Vector(1.0)

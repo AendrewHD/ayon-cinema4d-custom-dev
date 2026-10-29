@@ -7,6 +7,7 @@ the Object Manager / viewport / Node Editor as files (not tracked).
 Refreshes itself when the AYON server reports new products or versions.
 """
 import os
+import time
 import logging
 import tempfile
 import threading
@@ -29,6 +30,7 @@ from ayon_core.pipeline.load import (
     loaders_from_repre_context,
 )
 
+from ayon_cinema4d.api import lib
 from ayon_cinema4d.api.browser_drag import EXTENSION_PRIORITY, SKIP_NAMES
 from ayon_cinema4d.api.ui import entities, events, ids, widgets
 from ayon_cinema4d.api.ui.dialog import AyonDialog
@@ -56,6 +58,10 @@ ID_MERGE = 1013
 ID_ALEMBIC = 1014
 ID_XREF = 1015
 ID_INFO = 1016
+ID_TYPES = 1017
+
+DROP_CHECK_INTERVAL = 250  # ms
+DROP_CHECK_TIMEOUT = 3.0  # s
 
 MODE_LIST = 0
 MODE_GRID = 1
@@ -135,6 +141,23 @@ class ProductEntry:
     @property
     def product_type(self):
         return self.product.get("productType") or ""
+
+    @property
+    def extensions(self):
+        """File types of the shown version (no thumbnails / previews)."""
+        return sorted({
+            _repre_ext(r) for r in self.repres
+            if r["name"] not in SKIP_NAMES
+            and not r["name"].startswith(("h264", "review"))
+        })
+
+    def extensions_label(self):
+        exts = self.extensions
+        if not exts:
+            return ""
+        if len(exts) <= 2:
+            return " ".join(f".{e}" for e in exts)
+        return f"{len(exts)} formats"
 
 
 class ThumbnailLoader:
@@ -322,10 +345,23 @@ class ProductArea(c4d.gui.GeUserArea):
         self.DrawText(text, x + 5, y + 1)
         return width
 
-    def _background(self, entry, x1, y1, x2, y2):
-        if entry.id in self.selected:
-            self.DrawSetPen(widgets.SELECTION)
-            self.DrawRectangle(x1, y1, x2, y2)
+    def _frame(self, entry, x1, y1, x2, y2):
+        """Tinted background and border, bright border when selected."""
+        selected = entry.id in self.selected
+        self.DrawSetPen(
+            widgets.SELECTION if selected else widgets.tint(entry.product_type))
+        self.DrawRectangle(x1, y1, x2, y2)
+        border = (
+            widgets.mix(widgets.SELECTION, c4d.Vector(1.0), 0.45) if selected
+            else widgets.tint(entry.product_type, 0.55, c4d.Vector(0.32)))
+        self.DrawSetPen(border)
+        for offset in range(2 if selected else 1):
+            a, b = x1 + offset, y1 + offset
+            c, d = x2 - offset, y2 - offset
+            self.DrawLine(a, b, c, b)
+            self.DrawLine(a, d, c, d)
+            self.DrawLine(a, b, a, d)
+            self.DrawLine(c, b, c, d)
 
     def _version_text(self, entry):
         if not entry.version:
@@ -336,7 +372,8 @@ class ProductArea(c4d.gui.GeUserArea):
         return text
 
     def _draw_row(self, entry, x1, y1, x2, y2):
-        self._background(entry, x1, y1, x2, y2)
+        x1, y1, x2, y2 = x1 + 3, y1 + 2, x2 - 3, y2 - 2
+        self._frame(entry, x1, y1, x2, y2)
         thumb_w = 64
         self._draw_thumbnail(entry, x1 + 4, y1 + 4, x1 + 4 + thumb_w, y2 - 4)
         x = x1 + thumb_w + 12
@@ -361,13 +398,14 @@ class ProductArea(c4d.gui.GeUserArea):
         self._text(
             version_text, x2 - 12 - self.DrawGetTextWidth(version_text),
             y1 + 5, 120, font=c4d.FONT_BOLD)
-        self.DrawSetPen(widgets.LINE)
-        self.DrawLine(x1, y2 - 1, x2, y2 - 1)
+        exts = entry.extensions_label()
+        self.DrawSetFont(c4d.FONT_DEFAULT)
+        self._text(
+            exts, x2 - 12 - self.DrawGetTextWidth(exts), y1 + 9 + font_h,
+            120, color=widgets.TEXT_DIM)
 
     def _draw_card(self, entry, x1, y1, x2, y2):
-        self.DrawSetPen(widgets.CARD)
-        self.DrawRectangle(x1, y1, x2, y2)
-        self._background(entry, x1, y1, x2, y2)
+        self._frame(entry, x1, y1, x2, y2)
         thumb_h = (x2 - x1 - 8) * 9 // 16
         self._draw_thumbnail(entry, x1 + 4, y1 + 4, x2 - 4, y1 + 4 + thumb_h)
         y = y1 + thumb_h + 8
@@ -381,6 +419,10 @@ class ProductArea(c4d.gui.GeUserArea):
         self._text(
             self._version_text(entry), x1 + 14 + width, y + 1,
             x2 - x1 - width - 20)
+        exts = entry.extensions_label()
+        self._text(
+            exts, x2 - 6 - self.DrawGetTextWidth(exts), y + 1, 80,
+            color=widgets.TEXT_DIM)
 
     # -- input -----------------------------------------------------------
     def InputEvent(self, msg):
@@ -416,11 +458,15 @@ class ProductArea(c4d.gui.GeUserArea):
 
         if entry.id not in self.selected or qualifier:
             self._select(index, qualifier)
-        # Dragging a product drops its file (not tracked as container)
-        if not qualifier and entry.path and self.HandleMouseDrag(
-            msg, _drag_type(entry.path), entry.path, 0
-        ):
-            return True
+        # Dragging drops the file; Cinema 4D merges it, the dialog then
+        # turns the merged objects into an AYON container (see after_drop)
+        if not qualifier and entry.path:
+            before = self.dialog.scene_snapshot()
+            if self.HandleMouseDrag(
+                msg, _drag_type(entry.path), entry.path, 0
+            ):
+                self.dialog.guard(self.dialog.after_drop, entry, before)
+                return True
         if not qualifier and len(self.selected) > 1:
             self._select(index, 0)  # plain click in a multi selection
         return True
@@ -443,7 +489,8 @@ class ProductArea(c4d.gui.GeUserArea):
 def _drag_type(path):
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if ext in SCENE_EXTENSIONS:
-        return c4d.DRAGTYPE_FILENAME_SCENE
+        # What the Object Manager / viewport accept from Explorer drops
+        return c4d.DRAGTYPE_FILES
     if ext in IMAGE_EXTENSIONS:
         return c4d.DRAGTYPE_FILENAME_IMAGE
     return c4d.DRAGTYPE_FILENAME_OTHER
@@ -467,6 +514,8 @@ class LibraryDialog(AyonDialog):
         self._all_entries = []
         self._pending_folder = None
         self._loader_cache = {}  # version id -> loader names
+        self._type_filter = set()  # shown product types, empty = all
+        self._pending_drop = None
         self.products = ProductArea(self)
         self.folders = TreeModel(
             [Column("name", "Folder")], empty_text="No folders")
@@ -474,10 +523,11 @@ class LibraryDialog(AyonDialog):
 
     # -- layout ----------------------------------------------------------
     def build(self):
-        if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=7):
+        if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=8):
             self.AddComboBox(ID_PROJECT, c4d.BFH_LEFT, 180, 0)
             self.AddEditText(ID_FOLDER_FILTER, c4d.BFH_LEFT, 160, 0)
             self.AddEditText(ID_PRODUCT_FILTER, c4d.BFH_SCALEFIT, 160, 0)
+            self.AddButton(ID_TYPES, c4d.BFH_RIGHT, 100, 0, name="All types")
             self.AddComboBox(ID_VIEW_MODE, c4d.BFH_RIGHT, 80, 0)
             self.AddChild(ID_VIEW_MODE, MODE_LIST, "List")
             self.AddChild(ID_VIEW_MODE, MODE_GRID, "Grid")
@@ -556,20 +606,33 @@ class LibraryDialog(AyonDialog):
 
     def _fill_projects(self):
         current = get_current_project_name()
-        projects = [current]
+        libraries = set()
         try:
-            projects += sorted(
-                p["name"] for p in ayon_api.get_projects(
-                    fields={"name", "library"})
-                if p.get("library") and p["name"] != current)
+            names = ayon_api.get_project_names()
+            try:
+                libraries = {
+                    p["name"] for p in ayon_api.get_projects(
+                        fields={"name", "library"}) if p.get("library")}
+            except Exception:
+                log.debug("Library flags not available", exc_info=True)
         except Exception:
-            log.debug("Library projects not available", exc_info=True)
+            log.warning("Listing projects failed", exc_info=True)
+            names = []
+        # Current project first, then libraries, then the rest
+        others = sorted(
+            (n for n in names if n != current),
+            key=lambda n: (n not in libraries, n.lower()))
+        projects = [current] + others
         self._projects = projects
         if self.project_name not in projects:
             self._reset_project(current)
         self.FreeChildren(ID_PROJECT)
         for index, name in enumerate(projects):
-            label = name if index == 0 else f"{name}  (library)"
+            label = name
+            if index == 0:
+                label += "  (current)"
+            elif name in libraries:
+                label += "  (library)"
             self.AddChild(ID_PROJECT, index, label)
         self.SetInt32(ID_PROJECT, projects.index(self.project_name))
 
@@ -663,6 +726,8 @@ class LibraryDialog(AyonDialog):
     def _apply_product_filter(self):
         text = self.GetString(ID_PRODUCT_FILTER).strip().lower()
         entries = getattr(self, "_all_entries", [])
+        if self._type_filter:
+            entries = [e for e in entries if e.product_type in self._type_filter]
         if text:
             entries = [
                 e for e in entries
@@ -714,6 +779,164 @@ class LibraryDialog(AyonDialog):
             self.load_folders()
         elif topics:
             self.load_products(keep_versions=True)
+
+    def show_type_filter(self):
+        """Multi selection of product types (popup stays one click)."""
+        types = sorted({e.product_type for e in self._all_entries}
+                       | self._type_filter)
+
+        def toggle(product_type):
+            self._type_filter ^= {product_type}
+            self._update_type_button()
+            self._apply_product_filter()
+
+        def show_all():
+            self._type_filter = set()
+            self._update_type_button()
+            self._apply_product_filter()
+
+        widgets.popup(
+            [("*All" if not self._type_filter else "All", show_all), None]
+            + [(("*" if t in self._type_filter else "") + (t or "?"),
+                lambda t=t: toggle(t)) for t in types])
+
+    def _update_type_button(self):
+        if not self._type_filter:
+            label = "All types"
+        elif len(self._type_filter) == 1:
+            label = next(iter(self._type_filter))
+        else:
+            label = f"{len(self._type_filter)} types"
+        self.SetString(ID_TYPES, label)
+
+    # -- drag and drop -----------------------------------------------------
+    @staticmethod
+    def scene_snapshot():
+        doc = c4d.documents.GetActiveDocument()
+        return (
+            doc,
+            {lib.node_key(o) for o in lib.iter_all_objects(doc)},
+            {lib.node_key(m) for m in doc.GetMaterials()},
+        )
+
+    def after_drop(self, entry, before):
+        """Track a drop; the merge may also land a moment later."""
+        state = c4d.BaseContainer()
+        c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_SHIFT, state)
+        shift = bool(state.GetInt32(c4d.BFM_INPUT_QUALIFIER) & c4d.QSHIFT)
+        if not self._handle_drop(entry, before, shift):
+            self._pending_drop = (entry, before, shift, time.time())
+            self.SetTimer(DROP_CHECK_INTERVAL)
+
+    def Timer(self, msg):
+        pending = self._pending_drop
+        if pending is None:
+            self.SetTimer(0)
+            return
+        entry, before, shift, started = pending
+        found = self.guard(self._handle_drop, entry, before, shift)
+        if found or time.time() - started > DROP_CHECK_TIMEOUT:
+            self._pending_drop = None
+            self.SetTimer(0)
+
+    def _handle_drop(self, entry, before, shift):
+        """Make what Cinema 4D merged from a dropped file a container.
+
+        Shift held at the drop: the merged objects are replaced by an XRef
+        of the product at the same place.
+
+        Returns:
+            bool: True when the drop was handled (or can't be anymore).
+        """
+        old_doc, old_objects, old_materials = before
+        doc = c4d.documents.GetActiveDocument()
+        try:
+            same_doc = doc == old_doc
+        except ReferenceError:
+            same_doc = False
+        if not same_doc:
+            return True  # opened as own document, nothing to track
+        keys = {lib.node_key(o): o for o in lib.iter_all_objects(doc)}
+        new = [o for k, o in keys.items() if k not in old_objects]
+        if not new:
+            return False  # not merged (yet), or dropped elsewhere
+        if old_objects and len(old_objects - set(keys)) > len(old_objects) / 2:
+            # The importer rebuilt the scene, merged objects unknown
+            self.set_status("Dropped file not tracked (scene was rebuilt).")
+            return True
+        new_keys = {lib.node_key(o) for o in new}
+        roots = [o for o in new
+                 if o.GetUp() is None or lib.node_key(o.GetUp()) not in new_keys]
+        repre = _best_repre(entry.repres)
+        context = self._contexts([entry]).get(repre["id"]) if repre else None
+        if context is None:
+            return True
+
+        if shift:
+            self._replace_with_xref(doc, roots, old_materials, entry)
+        else:
+            self._containerise_drop(doc, roots, context)
+        c4d.EventAdd()
+        return True
+
+    def _containerise_drop(self, doc, roots, context):
+        from ayon_cinema4d.api import pipeline
+        loader = self._loader_by_name("MergeLoader")
+        name, namespace = loader().get_name_and_namespace(
+            context, None, None, doc)
+        with lib.undo_chunk():
+            group = c4d.BaseObject(c4d.Onull)
+            group.SetName(f"{namespace}_{name}")
+            group.InsertBefore(roots[0])
+            doc.AddUndo(c4d.UNDOTYPE_NEW, group)
+            for obj in roots:
+                matrix = obj.GetMg()
+                doc.AddUndo(c4d.UNDOTYPE_CHANGE, obj)
+                obj.Remove()
+                obj.InsertUnderLast(group)
+                obj.SetMg(matrix)
+        # containerise opens its own undo chunk
+        pipeline.containerise(
+            name=str(name), namespace=str(namespace), nodes=[group],
+            context=context, loader=loader.__name__)
+        self.set_status(f"Merged {context['product']['name']} (tracked)")
+
+    def _replace_with_xref(self, doc, roots, old_materials, entry):
+        parent, pred = roots[0].GetUp(), roots[0].GetPred()
+        with lib.undo_chunk():
+            for obj in roots:
+                doc.AddUndo(c4d.UNDOTYPE_DELETEOBJ, obj)
+                obj.Remove()
+            for mat in doc.GetMaterials():
+                if lib.node_key(mat) not in old_materials:
+                    doc.AddUndo(c4d.UNDOTYPE_DELETEOBJ, mat)
+                    mat.Remove()
+
+        before = {lib.node_key(o) for o in lib.iter_all_objects(doc)}
+        if not self.load([entry], "XRefLoader"):
+            return
+        # The loader placed it by preference, move it to the drop place
+        xref = next((
+            o for o in lib.iter_all_objects(doc)
+            if lib.node_key(o) not in before and o.CheckType(c4d.Oxref)
+        ), None)
+        if xref is None:
+            return
+        with lib.undo_chunk():
+            doc.AddUndo(c4d.UNDOTYPE_CHANGE, xref)
+            xref.Remove()
+            if pred is not None:
+                xref.InsertAfter(pred)
+            elif parent is not None:
+                xref.InsertUnder(parent)
+            else:
+                doc.InsertObject(xref)
+
+    def _loader_by_name(self, name):
+        for loader in self._get_loaders():
+            if loader.__name__ == name:
+                return loader
+        raise RuntimeError(f"Loader {name} not found")
 
     # -- selection / version ---------------------------------------------
     def on_product_selection(self):
@@ -920,6 +1143,8 @@ class LibraryDialog(AyonDialog):
             self._fill_folders()
         elif gadget_id == ID_PRODUCT_FILTER:
             self._apply_product_filter()
+        elif gadget_id == ID_TYPES:
+            self.show_type_filter()
         elif gadget_id == ID_SUBFOLDERS:
             self.load_products()
         elif gadget_id == ID_VIEW_MODE:

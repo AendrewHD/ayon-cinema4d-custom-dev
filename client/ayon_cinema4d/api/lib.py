@@ -877,3 +877,16 @@ def insert_objects(doc, objects):
             obj.InsertAfter(previous)
             doc.AddUndo(c4d.UNDOTYPE_NEW, obj)
         previous = obj
+
+
+def node_key(node):
+    """Hashable id of a node, unique in its document (GUID)."""
+    get_guid = getattr(node, "GetGUID", None)
+    if get_guid is not None:
+        return get_guid()
+    return bytes(node.FindUniqueID(c4d.MAXON_CREATOR_ID) or b"")
+
+
+def iter_all_objects(doc):
+    """Every object of the document, depth first."""
+    return iter_objects(doc.GetFirstObject())
