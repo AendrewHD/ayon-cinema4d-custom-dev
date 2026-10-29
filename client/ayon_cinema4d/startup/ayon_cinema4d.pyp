@@ -91,6 +91,10 @@ def is_commandline():
     return c4d.GeGetVersionType() in no_gui
 
 
+def is_interactive():
+    return not is_headless_mode_enabled() and not is_commandline()
+
+
 def install_menu():
     """Add the AYON menu after the Extensions (plug-ins) menu."""
     main_menu = c4d.gui.GetMenuResource("M_EDITOR")
@@ -107,6 +111,13 @@ def PluginMessage(id, data):
     """Entry point to add menu items to Cinema4D"""
     if id == c4d.C4DPL_BUILDMENU:
         install_menu()
+    elif id == c4d.C4DPL_PROGRAM_STARTED and is_interactive():
+        # Empty task: start in the first workfile version, not 'Untitled'
+        from ayon_cinema4d.api import workfiles
+        try:
+            workfiles.on_startup()
+        except Exception:
+            log.warning("Creating the first workfile failed", exc_info=True)
     return False
 
 
@@ -127,7 +138,7 @@ if __name__ == '__main__':
     registry.register(COMMANDS)
 
     # No context switching for command line / farm renders
-    if not is_headless_mode_enabled() and not is_commandline():
+    if is_interactive():
         c4d.plugins.RegisterMessagePlugin(
             id=ids.DOCUMENT_WATCHER,
             str="AYON Document Watcher",

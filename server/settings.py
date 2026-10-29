@@ -66,7 +66,31 @@ class RenderSettingsModel(BaseSettingsModel):
     )
 
 
+class WorkfileStartupModel(BaseSettingsModel):
+    create_first_workfile: bool = SettingsField(
+        True,
+        title="Start a task without workfiles in v001",
+        description=(
+            "When Cinema 4D starts in a task without workfiles, or a task"
+            " is started from the Workfiles window, save the empty scene"
+            " as the first workfile version."
+        ),
+    )
+    reset_frame_range: bool = SettingsField(
+        True, title="Set the frame range and fps of the task")
+    reset_resolution: bool = SettingsField(
+        True, title="Set the resolution of the task")
+    reset_colorspace: bool = SettingsField(
+        True, title="Set the colorspace (OCIO)")
+    reset_render_settings: bool = SettingsField(
+        True, title="Set the render settings (Redshift, output paths)")
+
+
 class Cinema4DSettings(BaseSettingsModel):
+    workfile_startup: WorkfileStartupModel = SettingsField(
+        default_factory=WorkfileStartupModel,
+        title="First Workfile",
+    )
     imageio: Cinema4DImageIOModel = SettingsField(
         default_factory=Cinema4DImageIOModel,
         title="Color Management (ImageIO)"
