@@ -12,6 +12,11 @@ ID_TREE = 1001
 ID_REFRESH = 1002
 ID_MANAGE = 1003
 ID_PUBLISH = 1004
+ID_SAVE = 1005
+ID_SAVE_NEXT = 1006
+ID_SAVE_AS = 1007
+
+SAVE_COMMAND = 12098  # File > Save
 
 
 def _version(number):
@@ -134,6 +139,12 @@ class PublishStatusDialog(AyonDialog):
         self.AttachUserArea(self.header, ID_HEADER)
         self.add_tree(ID_TREE, self.model, min_size=(240, 100))
         if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=3):
+            self.AddButton(ID_SAVE, c4d.BFH_SCALEFIT, name="Save")
+            self.AddButton(ID_SAVE_NEXT, c4d.BFH_SCALEFIT,
+                           name="Save Next Version")
+            self.AddButton(ID_SAVE_AS, c4d.BFH_SCALEFIT, name="Save As...")
+        self.GroupEnd()
+        if self.GroupBegin(0, c4d.BFH_SCALEFIT, cols=3):
             self.AddButton(ID_REFRESH, c4d.BFH_LEFT, name="Refresh")
             self.AddButton(ID_MANAGE, c4d.BFH_RIGHT | c4d.BFH_SCALE,
                            name="Manage...")
@@ -188,7 +199,15 @@ class PublishStatusDialog(AyonDialog):
             c4d.CallCommand(ids.MANAGE)
 
     def on_command(self, gadget_id, msg):
-        if gadget_id == ID_REFRESH:
+        save_commands = {
+            ID_SAVE: SAVE_COMMAND,
+            ID_SAVE_NEXT: ids.SAVE_NEXT_VERSION,
+            ID_SAVE_AS: ids.SAVE_AS,
+        }
+        if gadget_id in save_commands:
+            c4d.CallCommand(save_commands[gadget_id])
+            self.refresh()
+        elif gadget_id == ID_REFRESH:
             self.refresh()
         elif gadget_id == ID_MANAGE:
             c4d.CallCommand(ids.MANAGE)
