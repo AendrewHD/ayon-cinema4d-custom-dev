@@ -9,14 +9,14 @@ import logging
 import c4d
 import ayon_api
 
-from ayon_core.pipeline import get_current_project_name, registered_host
+from ayon_core.pipeline import registered_host
 from ayon_core.pipeline.load import (
     HeroVersionType,
     remove_container,
     update_container,
 )
 
-from ayon_cinema4d.api import lib, pipeline
+from ayon_cinema4d.api import inventory, lib, pipeline, tag_status
 from ayon_cinema4d.api.ui import events, ids, widgets
 from ayon_cinema4d.api.ui.dialog import AyonDialog
 from ayon_cinema4d.api.ui.registry import Command
@@ -39,10 +39,11 @@ ID_QT = 1009
 
 CHECK_INTERVAL = 1000  # ms, scene changes are checked at most this often
 
-STATE_LATEST = "latest"
-STATE_OUTDATED = "outdated"
-STATE_HERO = "hero"
-STATE_MISSING = "missing"
+STATE_LATEST = inventory.STATE_LATEST
+STATE_OUTDATED = inventory.STATE_OUTDATED
+STATE_HERO = inventory.STATE_HERO
+STATE_MISSING = inventory.STATE_MISSING
+collect_inventory = inventory.collect_inventory
 STATE_COLORS = {
     STATE_LATEST: widgets.GREEN,
     STATE_OUTDATED: widgets.ORANGE,
@@ -59,77 +60,6 @@ def _version_label(version):
     return f"v{version['version']:03d}"
 
 
-def collect_inventory(containers):
-    """Server info per container.
-
-    Returns:
-        list[dict]: One row per container: container, project_name,
-            folder, product, version, last_version, repre, state.
-    """
-    by_project = {}
-    for container in containers:
-        project_name = (
-            container.get("project_name") or get_current_project_name())
-        by_project.setdefault(project_name, []).append(container)
-
-    rows = []
-    for project_name, project_containers in by_project.items():
-        repre_ids = {c.get("representation") for c in project_containers}
-        repre_ids.discard(None)
-        repres = {
-            r["id"]: r for r in ayon_api.get_representations(
-                project_name, representation_ids=repre_ids,
-                fields={"id", "name", "versionId"})
-        } if repre_ids else {}
-        versions = {
-            v["id"]: v for v in ayon_api.get_versions(
-                project_name,
-                version_ids={r["versionId"] for r in repres.values()},
-                fields={"id", "version", "productId", "status"})
-        } if repres else {}
-        product_ids = {v["productId"] for v in versions.values()}
-        products = {
-            p["id"]: p for p in ayon_api.get_products(
-                project_name, product_ids=product_ids,
-                fields={"id", "name", "productType", "folderId"})
-        } if product_ids else {}
-        folders = {
-            f["id"]: f for f in ayon_api.get_folders(
-                project_name,
-                folder_ids={p["folderId"] for p in products.values()},
-                fields={"id", "path"})
-        } if products else {}
-        last_versions = ayon_api.get_last_versions(
-            project_name, product_ids, fields={"id", "version", "productId"}
-        ) if product_ids else {}
-
-        for container in project_containers:
-            repre = repres.get(container.get("representation"))
-            version = repre and versions.get(repre["versionId"])
-            product = version and products.get(version["productId"])
-            folder = product and folders.get(product["folderId"])
-            last = product and last_versions.get(product["id"])
-            if not version:
-                state = STATE_MISSING
-            elif version["version"] < 0:
-                state = STATE_HERO
-            elif last and version["version"] < last["version"]:
-                state = STATE_OUTDATED
-            else:
-                state = STATE_LATEST
-            rows.append({
-                "container": container,
-                "project_name": project_name,
-                "folder": folder,
-                "product": product,
-                "version": version,
-                "last_version": last,
-                "repre": repre,
-                "state": state,
-            })
-    return rows
-
-
 def _row_item(row):
     container = row["container"]
     product = row["product"] or {}
@@ -138,7 +68,10 @@ def _row_item(row):
     node = container.get("node")
     key = container.get("objectName") or str(id(container))
     if node is not None and node.IsAlive():
-        key = str(node.GetGUID())  # names are not guaranteed unique
+        # Names are not unique; tags have no GUID, one tag per object
+        owner = node.GetObject() if isinstance(node, c4d.BaseTag) else node
+        if owner is not None:
+            key = str(owner.GetGUID())
     return Item(
         key,
         {
@@ -280,6 +213,7 @@ class ManageDialog(AyonDialog):
         self._scene_dirty = False
         containers = list(registered_host().get_containers())
         self._rows = collect_inventory(containers)
+        tag_status.store(self._rows)
         self._fill()
 
     def _fill(self):

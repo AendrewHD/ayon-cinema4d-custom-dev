@@ -2,4 +2,14 @@ CONTAINER Tayoncontainer
 {
 	NAME Tayoncontainer;
 	INCLUDE Tbase;
+
+	GROUP ID_TAGPROPERTIES
+	{
+		GROUP
+		{
+			COLUMNS 2;
+			BUTTON AYON_UPDATE_LATEST { }
+			BUTTON AYON_OPEN_MANAGE { }
+		}
+	}
 }

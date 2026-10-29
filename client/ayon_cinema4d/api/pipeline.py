@@ -261,7 +261,7 @@ def imprint_container(
         "project_name": str(context["project"]["name"]),
     }
     data.update(_display_data(context))
-    lib.imprint(tag, data, group="AYON")
+    lib.imprint(tag, data, group="AYON", group_open=True)
     _name_tag(tag, context)
     return tag
 

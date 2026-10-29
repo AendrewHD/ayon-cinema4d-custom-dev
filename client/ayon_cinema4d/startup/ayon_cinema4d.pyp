@@ -42,7 +42,7 @@ from ayon_core.lib import is_headless_mode_enabled  # noqa: E402
 from ayon_cinema4d.api import Cinema4DHost  # noqa: E402
 from ayon_cinema4d.api import doc_context  # noqa: E402
 from ayon_cinema4d.api import handoff  # noqa: E402
-from ayon_cinema4d.api import container_tag  # noqa: E402
+from ayon_cinema4d.api import container_tag, tag_status  # noqa: E402
 from ayon_cinema4d.api.ui import events, ids, registry  # noqa: E402
 
 log = logging.getLogger("ayon_cinema4d")
@@ -67,9 +67,18 @@ class DocumentWatcher(c4d.plugins.MessageData):
                 handoff.tick()
             except Exception:
                 log.debug("AYON handoff tick failed", exc_info=True)
+            try:
+                tag_status.tick()
+            except Exception:
+                log.debug("AYON tag status failed", exc_info=True)
+            return True
+        if id == ids.EVENTS_MESSAGE:
+            tag_status.run_pending()  # tag "Update to Latest" buttons
             return True
         if id != c4d.EVMSG_CHANGE:
             return True
+
+        tag_status.mark_dirty()
 
         doc = c4d.documents.GetActiveDocument()
         path = doc_context.get_document_path(doc)
