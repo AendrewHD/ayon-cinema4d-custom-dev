@@ -1,6 +1,7 @@
 """Library functions for Cinema4d."""
 import contextlib
 import math
+import os
 import json
 import re
 
@@ -955,16 +956,24 @@ def get_xref_namespace(context, doc):
     return f"{namespace}_{number}"
 
 
-def set_xref_separator(xref, separator=XREF_SEPARATOR):
-    """Set the namespace separator (default '::') if Cinema 4D exposes it.
+# XRef options (separator, ...) are hidden object data, not parameters
+# (Maxon forum: not settable from Python), so new XRefs are cloned from an
+# XRef saved with the studio options.
+XREF_TEMPLATE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "resource", "xref_template.c4d")
 
-    It is an XRef option, not a documented parameter: look it up in the
-    description by symbol. Returns True when it was set.
-    """
-    description = xref.GetDescription(c4d.DESCFLAGS_DESC_NONE)
-    for bc, desc_id, _ in description:
-        ident = bc[c4d.DESC_IDENT] or ""
-        if "XREF" in ident and "SEPARATOR" in ident:
-            return xref.SetParameter(
-                desc_id, separator, c4d.DESCFLAGS_SET_USERINTERACTION)
-    return False
+
+def new_xref():
+    """A new XRef object with the template's options, plain if none."""
+    if os.path.isfile(XREF_TEMPLATE):
+        template = c4d.documents.LoadDocument(
+            XREF_TEMPLATE, c4d.SCENEFILTER_OBJECTS, None)
+        source = next((
+            obj for obj in iter_all_objects(template)
+            if obj.CheckType(c4d.Oxref)
+        ), None) if template else None
+        if source is not None:
+            xref = source.GetClone(c4d.COPYFLAGS_NO_HIERARCHY)
+            c4d.documents.KillDocument(template)
+            return xref
+    return c4d.BaseObject(c4d.Oxref)
