@@ -160,6 +160,45 @@ def _row_item(row):
     )
 
 
+STATE_ORDER = [STATE_LATEST, STATE_HERO, STATE_OUTDATED, STATE_MISSING]
+
+
+def _group_items(rows_items):
+    """One parent per product (like the Qt inventory), containers below."""
+    groups = {}
+    for row, item in rows_items:
+        product = row["product"] or {}
+        key = product.get("id") or f"missing:{item.key}"
+        groups.setdefault(key, []).append((row, item))
+
+    parents = []
+    for key, members in groups.items():
+        rows = [row for row, _ in members]
+        children = [item for _, item in members]
+        first = children[0]
+        state = max((r["state"] for r in rows), key=STATE_ORDER.index)
+        versions = {first_v["id"] for first_v in
+                    (r["version"] for r in rows) if first_v}
+        values = dict(first.values)
+        label = values["product"] or values["name"]
+        values["name"] = f"{label}  ({len(children)})"
+        values["product"] = (rows[0]["product"] or {}).get("productType", "")
+        if len(versions) > 1:
+            values["version"] = "mixed"
+        for child in children:
+            child.values["product"] = ""
+            child.values["folder"] = ""
+        parents.append(Item(
+            f"group:{key}", values,
+            data={"group": True, "state": state, "rows": rows},
+            swatch=first.swatch, bold=True,
+            colors={"version": STATE_COLORS[state]},
+            children=children,
+        ))
+    parents.sort(key=lambda i: i.text("name").lower())
+    return parents
+
+
 def _scene_signature(doc):
     """Cheap fingerprint of the containers in the document."""
     return (
@@ -182,10 +221,11 @@ class ManageDialog(AyonDialog):
         self._rows = []
         self._signature = None
         self._scene_dirty = False
+        self._known_groups = set()
         self.model = TreeModel(
             [
                 Column("name", "Name"),
-                Column("product", "Product"),
+                Column("product", "Type"),
                 Column("version", "Version", width=70, pill=True),
                 Column("latest", "Latest", width=60),
                 Column("repre", "Repre", width=60),
@@ -193,12 +233,24 @@ class ManageDialog(AyonDialog):
                 Column("folder", "Folder"),
             ],
             empty_text="Nothing loaded from AYON in this document.",
-            flat=True,
         )
-        self.model.on_double_click = lambda item: self.select_in_scene([item])
+        self.model.on_double_click = lambda item: self.select_in_scene(
+            self._containers([item]))
         self.model.context_menu = self._context_menu
         self.model.on_select = lambda items: self._update_buttons()
-        self.model.on_delete = self.remove
+        self.model.on_delete = lambda items: self.remove(
+            self._containers(items))
+
+    @staticmethod
+    def _containers(items):
+        """Container items of the selection (groups -> their children)."""
+        result, seen = [], set()
+        for item in items:
+            for child in (item.children if item.data.get("group") else [item]):
+                if child.key not in seen:
+                    seen.add(child.key)
+                    result.append(child)
+        return result
 
     # -- layout ----------------------------------------------------------
     def build(self):
@@ -233,7 +285,7 @@ class ManageDialog(AyonDialog):
     def _fill(self):
         text_filter = self.GetString(ID_FILTER).strip().lower()
         outdated_only = self.GetBool(ID_OUTDATED_ONLY)
-        items = []
+        rows_items = []
         for row in self._rows:
             if outdated_only and row["state"] != STATE_OUTDATED:
                 continue
@@ -242,8 +294,13 @@ class ManageDialog(AyonDialog):
                 text_filter in str(v).lower() for v in item.values.values()
             ):
                 continue
-            items.append(item)
-        self.model.set_items(items)
+            rows_items.append((row, item))
+        groups = _group_items(rows_items)
+        # New groups open, collapsed ones stay collapsed
+        known = self._known_groups
+        self.model.open_keys(g.key for g in groups if g.key not in known)
+        known.update(g.key for g in groups)
+        self.model.set_items(groups)
 
         outdated = sum(1 for r in self._rows if r["state"] == STATE_OUTDATED)
         missing = sum(1 for r in self._rows if r["state"] == STATE_MISSING)
@@ -279,15 +336,18 @@ class ManageDialog(AyonDialog):
         if gadget_id == ID_REFRESH:
             self.refresh()
         elif gadget_id == ID_UPDATE:
-            self.set_version(self.model.selected_items(), -1)
+            self.set_version(
+                self._containers(self.model.selected_items()), -1)
         elif gadget_id == ID_UPDATE_ALL:
             self.set_version(
                 [i for i in self.model.all_items()
-                 if i.data["state"] == STATE_OUTDATED], -1)
+                 if not i.data.get("group")
+                 and i.data["state"] == STATE_OUTDATED], -1)
         elif gadget_id == ID_SELECT:
-            self.select_in_scene(self.model.selected_items())
+            self.select_in_scene(
+                self._containers(self.model.selected_items()))
         elif gadget_id == ID_REMOVE:
-            self.remove(self.model.selected_items())
+            self.remove(self._containers(self.model.selected_items()))
         elif gadget_id in (ID_OUTDATED_ONLY, ID_FILTER):
             self._fill()
         elif gadget_id == ID_QT:
@@ -374,6 +434,7 @@ class ManageDialog(AyonDialog):
         return [("Set Version", entries)]
 
     def _context_menu(self, items):
+        items = self._containers(items)
         if not items:
             return [("Refresh", self.refresh)]
         return [
