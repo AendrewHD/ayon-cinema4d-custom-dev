@@ -458,14 +458,15 @@ class ProductArea(c4d.gui.GeUserArea):
 
         if entry.id not in self.selected or qualifier:
             self._select(index, qualifier)
-        # Dragging drops the file; Cinema 4D merges it, the dialog then
-        # turns the merged objects into an AYON container (see after_drop)
+        # Dragging drops the file; Cinema 4D merges it (Merge on Drag & Drop
+        # is forced on), the dialog then makes it a container (after_drop)
         if not qualifier and entry.path:
             before = self.dialog.scene_snapshot()
             if _is_scene_file(entry.path):
                 # The Object Manager / viewport only take scene files from
                 # an OS drag (like Explorer), not from a dialog drag
                 if self._drag_started(x, y):
+                    self.dialog.force_merge_on_drop()
                     widgets.start_os_file_drag([entry.path])
                     self.dialog.guard(self.dialog.after_drop, entry, before)
                     return True
@@ -546,6 +547,7 @@ class LibraryDialog(AyonDialog):
         self._loader_cache = {}  # version id -> loader names
         self._type_filter = set()  # shown product types, empty = all
         self._pending_drop = None
+        self._merge_on_drop = None  # user preference while forced
         self.products = ProductArea(self)
         self.folders = TreeModel(
             [Column("name", "Folder")], empty_text="No folders")
@@ -849,31 +851,59 @@ class LibraryDialog(AyonDialog):
             {lib.node_key(m) for m in doc.GetMaterials()},
         )
 
+    def force_merge_on_drop(self):
+        """Native merge at the drop place instead of opening the file.
+
+        Restored once the drop is handled (see `_end_drop`).
+        """
+        if self._merge_on_drop is None:
+            current = lib.get_merge_on_drop()
+            if current is False and lib.set_merge_on_drop(True):
+                self._merge_on_drop = current
+
+    def _end_drop(self):
+        self._pending_drop = None
+        self.SetTimer(0)
+        if self._merge_on_drop is not None:
+            lib.set_merge_on_drop(self._merge_on_drop)
+            self._merge_on_drop = None
+
+    def DestroyWindow(self):
+        self._end_drop()
+        super().DestroyWindow()
+
     def after_drop(self, entry, before):
         """Track a drop; the merge may also land a moment later."""
         state = c4d.BaseContainer()
         c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, c4d.KEY_SHIFT, state)
         shift = bool(state.GetInt32(c4d.BFM_INPUT_QUALIFIER) & c4d.QSHIFT)
-        if not self._handle_drop(entry, before, shift):
-            self._pending_drop = (entry, before, shift, time.time())
-            self.SetTimer(DROP_CHECK_INTERVAL)
+        handled = True  # also on errors, those are shown by the guard
+        try:
+            handled = self._handle_drop(entry, before, shift)
+        finally:
+            if handled:
+                self._end_drop()
+            else:
+                self._pending_drop = (entry, before, shift, time.time())
+                self.SetTimer(DROP_CHECK_INTERVAL)
 
     def Timer(self, msg):
         pending = self._pending_drop
         if pending is None:
-            self.SetTimer(0)
+            self._end_drop()
             return
         entry, before, shift, started = pending
         found = self.guard(self._handle_drop, entry, before, shift)
-        if found or time.time() - started > DROP_CHECK_TIMEOUT:
-            self._pending_drop = None
-            self.SetTimer(0)
+        # None: failed, shown by the guard
+        if found is not False or time.time() - started > DROP_CHECK_TIMEOUT:
+            self._end_drop()
 
     def _handle_drop(self, entry, before, shift):
         """Make what Cinema 4D merged from a dropped file a container.
 
-        Shift held at the drop: the merged objects are replaced by an XRef
-        of the product at the same place.
+        Shift held at the drop: Cinema 4D opens the file instead (Shift
+        reverses Merge on Drag & Drop), it is closed again and the product
+        loaded as XRef.
 
         Returns:
             bool: True when the drop was handled (or can't be anymore).
@@ -885,9 +915,9 @@ class LibraryDialog(AyonDialog):
         except ReferenceError:
             same_doc = False
         if not same_doc:
-            # A plain drop opens the file as own document (Shift merges):
-            # close it again and merge the product into the previous one
-            self._merge_instead_of_open(doc, old_doc, entry)
+            # Opened as own document: Shift, or the preference couldn't be
+            # forced. Close it and load into the previous document instead
+            self._load_instead_of_open(doc, old_doc, entry, shift)
             return True
         keys = {lib.node_key(o): o for o in lib.iter_all_objects(doc)}
         new = [o for k, o in keys.items() if k not in old_objects]
@@ -912,7 +942,7 @@ class LibraryDialog(AyonDialog):
         c4d.EventAdd()
         return True
 
-    def _merge_instead_of_open(self, opened_doc, old_doc, entry):
+    def _load_instead_of_open(self, opened_doc, old_doc, entry, xref):
         path = os.path.join(
             opened_doc.GetDocumentPath(), opened_doc.GetDocumentName())
         if os.path.normcase(os.path.normpath(path)) != os.path.normcase(
@@ -927,7 +957,10 @@ class LibraryDialog(AyonDialog):
         c4d.documents.SetActiveDocument(old_doc)
         c4d.EventAdd()
         # Placed by Preferences > Insert Objects at (drop place unknown)
-        self.load_default([entry])
+        if xref:
+            self.load([entry], "XRefLoader")
+        else:
+            self.load_default([entry])
 
     def _containerise_drop(self, doc, roots, context):
         from ayon_cinema4d.api import pipeline
