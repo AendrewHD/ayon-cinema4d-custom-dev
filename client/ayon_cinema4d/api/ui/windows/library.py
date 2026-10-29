@@ -467,10 +467,11 @@ class ProductArea(c4d.gui.GeUserArea):
                 # an OS drag (like Explorer), not from a dialog drag
                 if self._drag_started(x, y):
                     self.dialog.force_merge_on_drop()
-                    # Shift at the drop: no file for Cinema 4D, XRef instead
+                    # Shift during the drag: cancel it (Cinema 4D would
+                    # import the file), the product is loaded as XRef
                     _, xref = widgets.start_os_file_drag(
-                        [entry.path], withhold=widgets.shift_held)
-                    if xref and widgets.shift_held():
+                        [entry.path], cancel_when=widgets.shift_pressed)
+                    if xref:
                         self.dialog.guard(self.dialog.xref_drop, entry)
                     else:
                         self.dialog.guard(
@@ -879,7 +880,7 @@ class LibraryDialog(AyonDialog):
         super().DestroyWindow()
 
     def xref_drop(self, entry):
-        """Shift-drop: load as XRef, nothing was handed to Cinema 4D."""
+        """Shift-drag: load as XRef, the drag was cancelled before a drop."""
         self._end_drop()
         # Placed by Preferences > Insert Objects at (drop place unknown)
         self.load([entry], "XRefLoader")
@@ -911,7 +912,7 @@ class LibraryDialog(AyonDialog):
     def _handle_drop(self, entry, before, shift):
         """Make what Cinema 4D merged from a dropped file a container.
 
-        Shift held at the drop is normally caught before (`xref_drop`).
+        Shift during the drag is normally caught before (`xref_drop`).
         If Cinema 4D still got the file it opened or merged it: the result
         is turned into an XRef.
 
