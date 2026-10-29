@@ -1,13 +1,11 @@
 """Publish status of the active document (see `ui/windows/publish_status`).
 
 What was published from this workfile, the task's latest workfile publish
-and outdated loaded containers.
+and the state of the loaded containers.
 """
 import os
 import logging
-from datetime import datetime
 
-import c4d
 import ayon_api
 
 from ayon_core.pipeline import registered_host
@@ -16,47 +14,73 @@ from . import doc_context
 
 log = logging.getLogger(__name__)
 
-def _time(value):
-    """Server timestamp -> local 'YYYY-MM-DD HH:MM'."""
-    try:
-        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return stamp.astimezone().strftime("%Y-%m-%d %H:%M")
-    except (AttributeError, ValueError):
-        return value or ""
+VERSION_FIELDS = {
+    "id", "version", "productId", "createdAt", "author", "attrib.source",
+    "attrib.comment", "status",
+}
 
 
 def _same_path(a, b):
     return bool(a and b) and a.replace("\\", "/").lower() == b.lower()
 
 
-def get_status(doc):
-    """Collect the status lines of the document.
+def _version_row(version, products):
+    product = products.get(version["productId"], {})
+    attrib = version.get("attrib") or {}
+    return {
+        "id": version["id"],
+        "product": product.get("name", "?"),
+        "product_type": product.get("productType", ""),
+        "version": version["version"],
+        "created": version.get("createdAt"),
+        "author": version.get("author") or "",
+        "comment": attrib.get("comment") or "",
+        "status": version.get("status") or "",
+        "source": os.path.basename(attrib.get("source") or ""),
+    }
+
+
+def get_status_data(doc):
+    """Publish status of `doc`.
 
     Returns:
-        tuple[str, list[str]]: Header and rows.
+        dict: context, workfile, saved, unsaved, own (versions published
+            from this file), latest_workfile (latest workfile publish of
+            the task if not this file), loaded, outdated (container rows),
+            message (why nothing could be checked).
     """
     host = registered_host()
-    context = doc_context.get_document_context(doc) or host.get_current_context()
+    context = (
+        doc_context.get_document_context(doc) or host.get_current_context())
     project_name = context["project_name"]
     path = doc_context.get_document_path(doc)
-    header = f"{context['folder_path']}  /  {context['task_name']}"
+    data = {
+        "context": f"{context['folder_path']}  /  {context['task_name']}",
+        "workfile": os.path.basename(path) if path else doc.GetDocumentName(),
+        "saved": bool(path),
+        "unsaved": bool(doc.GetChanged()),
+        "own": [],
+        "latest_workfile": None,
+        "loaded": 0,
+        "outdated": [],
+        "message": "",
+    }
+    data.update(_container_status(project_name, host))
     if not path:
-        return header, ["Document is not saved."]
+        data["message"] = "Document is not saved."
+        return data
 
     folder = ayon_api.get_folder_by_path(
         project_name, context["folder_path"], fields={"id"})
     task = folder and ayon_api.get_task_by_name(
         project_name, folder["id"], context["task_name"], fields={"id"})
     if not task:
-        return header, ["Task not found on the server."]
+        data["message"] = "Task not found on the server."
+        return data
 
     rootless = doc_context.get_rootless_path(project_name, path)
     versions = list(ayon_api.get_versions(
-        project_name,
-        task_ids=[task["id"]],
-        fields={"id", "version", "productId", "createdAt", "author",
-                "attrib.source"},
-    ))
+        project_name, task_ids=[task["id"]], fields=VERSION_FIELDS))
     products = {
         product["id"]: product
         for product in ayon_api.get_products(
@@ -64,25 +88,16 @@ def get_status(doc):
             product_ids={v["productId"] for v in versions},
             fields={"id", "name", "productType"},
         )
-    }
+    } if versions else {}
 
-    def label(version):
-        product = products.get(version["productId"], {})
-        return (
-            f"{product.get('name', '?')}  v{version['version']:03d}   "
-            f"{_time(version['createdAt'])}  {version.get('author') or ''}"
-        )
-
-    rows = []
     own = [
         v for v in versions
-        if _same_path(v["attrib"].get("source"), rootless)
+        if _same_path((v.get("attrib") or {}).get("source"), rootless)
     ]
-    if own:
-        rows.append("Published from this file:")
-        rows.extend(f"    {label(v)}" for v in own)
-    else:
-        rows.append("This file is not published.")
+    data["own"] = [
+        _version_row(v, products)
+        for v in sorted(own, key=lambda v: v["createdAt"], reverse=True)
+    ]
 
     workfiles = sorted(
         (
@@ -93,36 +108,55 @@ def get_status(doc):
         key=lambda v: v["createdAt"],
     )
     if workfiles and workfiles[-1] not in own:
-        latest = workfiles[-1]
-        source = os.path.basename(latest["attrib"].get("source") or "")
-        rows.append("Latest workfile publish of the task:")
-        rows.append(f"    {label(latest)}")
-        rows.append(f"    from {source}")
-
-    rows.extend(_container_rows(project_name, host))
-    return header, rows
+        data["latest_workfile"] = _version_row(workfiles[-1], products)
+    return data
 
 
-def _container_rows(project_name, host):
-    repre_ids = {c["representation"] for c in host.get_containers()}
-    if not repre_ids:
-        return []
-
-    repres = ayon_api.get_representations(
-        project_name, representation_ids=repre_ids, fields={"versionId"})
-    version_ids = {r["versionId"] for r in repres}
-    versions = list(ayon_api.get_versions(
-        project_name, version_ids=version_ids,
-        fields={"id", "version", "productId"}))
-    last = ayon_api.get_last_versions(
-        project_name, {v["productId"] for v in versions},
-        fields={"version", "productId"})
-    outdated = [
-        v for v in versions
-        if last.get(v["productId"])
-        and v["version"] < last[v["productId"]]["version"]
+def _container_status(project_name, host):
+    containers = [
+        c for c in host.get_containers()
+        if c.get("project_name", project_name) == project_name
     ]
-    text = f"Loaded: {len(versions)} versions"
-    if outdated:
-        text += f", {len(outdated)} outdated (AYON > Manage...)"
-    return [text]
+    repre_ids = {c.get("representation") for c in containers}
+    repre_ids.discard(None)
+    if not repre_ids:
+        return {"loaded": len(containers)}
+
+    repres = {
+        r["id"]: r for r in ayon_api.get_representations(
+            project_name, representation_ids=repre_ids,
+            fields={"id", "versionId"})
+    }
+    versions = {
+        v["id"]: v for v in ayon_api.get_versions(
+            project_name,
+            version_ids={r["versionId"] for r in repres.values()},
+            fields={"id", "version", "productId"})
+    }
+    products = {
+        p["id"]: p for p in ayon_api.get_products(
+            project_name,
+            product_ids={v["productId"] for v in versions.values()},
+            fields={"id", "name", "productType"})
+    } if versions else {}
+    last = ayon_api.get_last_versions(
+        project_name, set(products), fields={"version", "productId"}
+    ) if products else {}
+
+    outdated = []
+    for container in containers:
+        repre = repres.get(container.get("representation"))
+        version = repre and versions.get(repre["versionId"])
+        latest = version and last.get(version["productId"])
+        if not latest or version["version"] < 0:
+            continue
+        if version["version"] < latest["version"]:
+            product = products.get(version["productId"], {})
+            outdated.append({
+                "name": container.get("namespace") or container.get("name"),
+                "product": product.get("name", "?"),
+                "product_type": product.get("productType", ""),
+                "version": version["version"],
+                "latest": latest["version"],
+            })
+    return {"loaded": len(containers), "outdated": outdated}
