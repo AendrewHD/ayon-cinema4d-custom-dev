@@ -17,6 +17,9 @@ class CreateReview(plugin.Cinema4DCreator):
 
     render_target = "local"
     default_chunk_size = 10
+    # Added to every published review version, see `CollectVersionTags`.
+    # Overridden by settings: cinema4d/create/CreateReview
+    version_tags = ["previz"]
 
     def get_publish_families(self):
         # Shows the Deadline job options on the instance. Removed again by

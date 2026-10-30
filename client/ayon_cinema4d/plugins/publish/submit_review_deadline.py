@@ -176,6 +176,9 @@ class Cinema4DSubmitReviewDeadline(_SubmitDeadline):
         # Marked takes are grouped under the review product
         if instance.data.get("productGroup"):
             data["productGroup"] = instance.data["productGroup"]
+        # The core farm skeleton drops the version tags
+        if instance.data.get("versionTags"):
+            data["versionTags"] = list(instance.data["versionTags"])
 
         output_dir = instance.data["outputDir"]
         success, staging_dir = anatomy.find_root_template_from_path(

@@ -47,6 +47,14 @@ class CreateRenderModel(BaseCreatePluginModel):
     )
 
 
+class CreateReviewModel(BaseCreatePluginModel):
+    version_tags: list[str] = SettingsField(
+        default_factory=lambda: ["previz"],
+        title="Version tags",
+        description="Tags added to every published review version.",
+    )
+
+
 class CreatePluginsModel(BaseSettingsModel):
     RenderlayerCreator: CreateRenderModel = SettingsField(
         title="Create Render",
@@ -64,9 +72,9 @@ class CreatePluginsModel(BaseSettingsModel):
         title="Create Redshift Proxy",
         default_factory=BaseCreatePluginModel,
     )
-    CreateReview: BaseCreatePluginModel = SettingsField(
+    CreateReview: CreateReviewModel = SettingsField(
         title="Create Review",
-        default_factory=BaseCreatePluginModel,
+        default_factory=CreateReviewModel,
     )
 
 
@@ -78,5 +86,10 @@ DEFAULT_CREATE_SETTINGS = {
             {"name": "preview", "label": "Preview"},
             {"name": "final", "label": "Final"},
         ],
+    },
+    "CreateReview": {
+        "enabled": True,
+        "product_type_items": [],
+        "version_tags": ["previz"],
     },
 }
