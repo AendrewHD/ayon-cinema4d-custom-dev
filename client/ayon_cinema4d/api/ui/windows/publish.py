@@ -279,6 +279,10 @@ class PublishDialog(AyonDialog):
             self.AddStaticText(
                 0, c4d.BFH_SCALEFIT,
                 name="Select one instance to edit its settings.")
+            # Context plug-ins, e.g. Validate Loaded Versions
+            if self.create_context is not None:
+                self._add_publish_sections(
+                    self.create_context.publish_attributes)
             self.LayoutChanged(ID_ATTRS)
             return
 
@@ -301,10 +305,13 @@ class PublishDialog(AyonDialog):
         self.attributes.add_section(
             getattr(creator, "label", "Creator"),
             instance.creator_attributes)
-        for plugin_name, values in instance.publish_attributes.items():
+        self._add_publish_sections(instance.publish_attributes)
+        self.LayoutChanged(ID_ATTRS)
+
+    def _add_publish_sections(self, publish_attributes):
+        for plugin_name, values in publish_attributes.items():
             if getattr(values, "attr_defs", None):
                 self.attributes.add_section(plugin_name, values)
-        self.LayoutChanged(ID_ATTRS)
 
     def _on_attribute_change(self, values, key, value):
         self._attrs_dirty = True  # saved by the Timer, not per keystroke

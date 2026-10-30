@@ -30,10 +30,25 @@ class PublishPluginsModel(BaseSettingsModel):
             "Validate the publish frame range matches AYON task entity."
         )
     )
+    # Loaded versions validator
+    ValidateLoadedVersions: BasicEnabledStatesModel = SettingsField(
+        default_factory=BasicEnabledStatesModel,
+        title="Validate Loaded Versions",
+        description=(
+            "Validate the products loaded in the scene are on their latest "
+            "version. Turned off by the artist, outdated products only log "
+            "a warning."
+        )
+    )
 
 
 DEFAULT_PUBLISH_SETTINGS = {
     "ValidateFrameRange": {
+        "enabled": True,
+        "optional": True,
+        "active": True,
+    },
+    "ValidateLoadedVersions": {
         "enabled": True,
         "optional": True,
         "active": True,
