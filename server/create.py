@@ -34,7 +34,10 @@ class RenderQualityModel(BaseSettingsModel):
         "",
         title="Name",
         regex="^[A-Za-z0-9_-]+$",
-        description="Version tag, must exist in the project anatomy tags",
+        description=(
+            "Version tag. Doesn't have to exist in the project anatomy,"
+            " it only gives the tag its colour."
+        ),
     )
     label: str = SettingsField("", title="Label")
 

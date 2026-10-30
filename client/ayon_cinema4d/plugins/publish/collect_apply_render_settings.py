@@ -10,9 +10,8 @@ class CollectApplyRenderSettings(pyblish.api.InstancePlugin):
 
     Frame range (handles included), frame step, frame rate, resolution and
     output paths of each rendered take's render settings are set from the
-    product, and a missing render quality tag is added to the project. The
-    workfile is saved before a farm submission (`SaveCurrentScene`), so the
-    farm renders the same settings.
+    product. The workfile is saved before a farm submission
+    (`SaveCurrentScene`), so the farm renders the same settings.
     """
 
     label = "Apply Render Product Settings"
@@ -32,7 +31,6 @@ class CollectApplyRenderSettings(pyblish.api.InstancePlugin):
             doc, instance.data.get("take")
         )
         self.apply_render_settings(instance, doc, render_data, attrs)
-        self.ensure_quality_tag(instance, attrs.get("render_quality"))
 
     def apply_render_settings(self, instance, doc, render_data, attrs):
         product = lib.get_render_product(attrs)
@@ -59,24 +57,3 @@ class CollectApplyRenderSettings(pyblish.api.InstancePlugin):
                 "\n".join(f"- {change}" for change in changes),
             )
         )
-
-    def ensure_quality_tag(self, instance, quality):
-        """Add the render quality tag to the project when it's missing.
-
-        Needs project manager rights, `ValidateRenderQuality` reports a
-        failure.
-        """
-        if not quality or not lib.core_supports_version_tags():
-            return
-
-        context = instance.context
-        tags = context.data["projectEntity"].setdefault("tags", [])
-        if quality in {tag["name"] for tag in tags}:
-            return
-        try:
-            lib.add_project_tag(context.data["projectName"], quality)
-        except Exception as exc:
-            self.log.warning(f"Could not add tag '{quality}': {exc}")
-            return
-        tags.append({"name": quality})
-        self.log.info(f"Added tag '{quality}' to the project.")
