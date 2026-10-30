@@ -156,6 +156,45 @@ def resolve_filepath(
     return resolved
 
 
+def get_take_effective_path(
+    path: str,
+    doc: c4d.documents.BaseDocument,
+    render_data: c4d.documents.RenderData,
+    take: c4d.modules.takesystem.BaseTake,
+) -> str:
+    """Return a renderer's effective output path as `take` renders it.
+
+    Renderers report the effective path of the current take. A Redshift
+    Direct Output path starts with the folder of the Multi-Pass or regular
+    image ($filepath), which holds $take in the pipeline paths, so that
+    folder is swapped for the folder `take` renders to. Other paths are
+    returned unchanged.
+    """
+    current = doc.GetTakeData().GetCurrentTake()
+    if take is None or current is None or take == current:
+        return path
+
+    path = os.path.normpath(path)
+    for param_id in (c4d.RDATA_MULTIPASS_FILENAME, c4d.RDATA_PATH):
+        token_path = render_data[param_id]
+        if not token_path:
+            continue
+        if not os.path.isabs(token_path):
+            token_path = os.path.join(doc.GetDocumentPath(), token_path)
+        current_dir, take_dir = (
+            os.path.dirname(os.path.normpath(resolve_filepath(
+                token_path, doc=doc, render_data=render_data, take=t
+            )))
+            for t in (current, take)
+        )
+        prefix = os.path.join(current_dir, "")
+        if current_dir != take_dir and _normalize_path(path).startswith(
+            os.path.normcase(prefix)
+        ):
+            return os.path.join(take_dir, path[len(prefix):])
+    return path
+
+
 def strip_frame_suffix(path: str) -> str:
     """Return a rendered filepath without its frame number and extension.
 

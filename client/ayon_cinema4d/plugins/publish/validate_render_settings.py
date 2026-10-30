@@ -47,7 +47,10 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
                 {}
 
                 *Repair* applies the product frame range, frame rate and
-                resolution to these render settings.
+                resolution to these render settings. Shared output files
+                are not repaired: add the $take token to that output's
+                path (for a Redshift Direct Output AOV, its File Path in the
+                AOV Manager).
                 """
             ).format(render_data.GetName(), take.GetName(), report),
         )
@@ -85,11 +88,9 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
     @staticmethod
     def get_invalid_outputs(instance):
         """Return errors for missing or shared output files."""
+        files_by_aov = instance.data.get("expectedFiles", [{}])[0]
         files = {
-            path
-            for aov_files in instance.data.get("expectedFiles", [{}])[0]
-            .values()
-            for path in aov_files
+            path for aov_files in files_by_aov.values() for path in aov_files
         }
         if not files:
             return ["No output files found, the output settings or the"
@@ -110,13 +111,17 @@ class ValidateRenderSettings(pyblish.api.InstancePlugin):
                 for aov_files in other.data["expectedFiles"][0].values()
                 for path in aov_files
             }
-            if files & other_files:
-                errors.append(
-                    "Output files are shared with '{}', add the $take"
-                    " token to the output paths.".format(
-                        other.data["productName"]
+            for aov_name, aov_files in files_by_aov.items():
+                shared = sorted(other_files.intersection(aov_files))
+                if shared:
+                    errors.append(
+                        "Output '{}' writes the same files as '{}', add the"
+                        " $take token to its path: {}".format(
+                            aov_name or "beauty",
+                            other.data["productName"],
+                            shared[0],
+                        )
                     )
-                )
         return errors
 
     @classmethod
