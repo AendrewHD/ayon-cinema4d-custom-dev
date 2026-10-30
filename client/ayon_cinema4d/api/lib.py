@@ -4,7 +4,6 @@ import math
 import json
 import re
 
-import ayon_api
 import c4d
 
 from ayon_core.lib import NumberDef
@@ -14,7 +13,6 @@ AYON_CONTAINERS = "AYON_CONTAINERS"
 JSON_PREFIX = "JSON::"
 # First ayon-core version integrating `versionTags`
 VERSION_TAGS_CORE_VERSION = (1, 9, 8)
-TAG_COLOR = "#5bb8f5"
 
 
 def collect_animation_defs(create_context, fps=False):
@@ -801,21 +799,6 @@ def core_supports_version_tags():
     """Return whether ayon-core integrates `versionTags`."""
     version = tuple(int(n) for n in re.findall(r"\d+", core_version)[:3])
     return version >= VERSION_TAGS_CORE_VERSION
-
-
-def add_project_tag(project_name, tag_name):
-    """Add a tag to the project anatomy, needs project manager rights.
-
-    Returns:
-        bool: Whether the tag was added, False if it already existed.
-    """
-    tags = ayon_api.get_project(project_name).get("tags") or []
-    if tag_name in {tag["name"] for tag in tags}:
-        return False
-    ayon_api.update_project(
-        project_name, tags=tags + [{"name": tag_name, "color": TAG_COLOR}]
-    )
-    return True
 
 
 # Preferences > Interface > "Insert Objects at", see `insert_object`.
