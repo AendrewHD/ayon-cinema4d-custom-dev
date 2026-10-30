@@ -1,3 +1,3 @@
 # -*- coding: utf-8 -*-
 """Package declaring AYON addon 'cinema4d' version."""
-__version__ = "0.3.21+dev"
+__version__ = "0.3.22+dev"
