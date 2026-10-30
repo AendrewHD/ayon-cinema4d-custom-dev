@@ -271,6 +271,16 @@ class CollectCinema4DRender(
                 files.append(resolved_path)
             return files
 
+        def effective_files_resolver(effective_path: str) -> list[str]:
+            """Return filepaths for all frames of a renderer's effective
+            path, which the renderer reports for the current take."""
+            path = lib_renderproducts.get_take_effective_path(
+                effective_path, doc, render_data, take
+            )
+            return files_resolver(
+                lib_renderproducts.strip_frame_suffix(path)
+            )
+
         # Get take render data AOVs
         products: dict[str, list[str]] = {}
 
@@ -290,7 +300,7 @@ class CollectCinema4DRender(
         save_multipass_image: bool = render_data[c4d.RDATA_MULTIPASS_SAVEIMAGE]
         if save_multipass_image:
             multipass, separate = self._collect_multipass(
-                render_data, files_resolver
+                render_data, files_resolver, effective_files_resolver
             )
             separate_aovs.extend(separate)
             merged_aovs.extend(separate)
@@ -347,7 +357,8 @@ class CollectCinema4DRender(
     def _collect_multipass(
         self,
         render_data,
-        files_resolver
+        files_resolver,
+        effective_files_resolver
     ) -> tuple[dict[str, list[str]], list[str]]:
         """Return the Multi-Pass outputs and the AOVs written separately.
 
@@ -383,7 +394,7 @@ class CollectCinema4DRender(
             separate = {}
             if redshift_vp:
                 separate = self._collect_redshift_direct_aovs(
-                    redshift_vp, files_resolver
+                    redshift_vp, effective_files_resolver
                 )
             products.update(separate)
             return products, list(separate)
@@ -392,6 +403,7 @@ class CollectCinema4DRender(
             return self._collect_redshift_aovs(
                 redshift_vp,
                 files_resolver_fn=files_resolver,
+                effective_files_resolver_fn=effective_files_resolver,
                 multipass_token_path=multipass_token_path
             ), []
 
@@ -400,7 +412,7 @@ class CollectCinema4DRender(
     def _collect_redshift_direct_aovs(
         self,
         redshift_vp: c4d.documents.BaseVideoPost,
-        files_resolver_fn
+        effective_files_resolver_fn
     ) -> dict[str, list[str]]:
         """Collect the AOVs Redshift writes into their own file.
 
@@ -423,9 +435,7 @@ class CollectCinema4DRender(
 
             name = aov.name or aov.effective_name
             key = self._get_aov_key(name, products)
-            products[key] = files_resolver_fn(
-                lib_renderproducts.strip_frame_suffix(path)
-            )
+            products[key] = effective_files_resolver_fn(path)
             self.log.debug(
                 f"Collected separate AOV '{key}' from: {path}"
             )
@@ -446,6 +456,7 @@ class CollectCinema4DRender(
         self,
         redshift_vp: c4d.documents.BaseVideoPost,
         files_resolver_fn,
+        effective_files_resolver_fn,
         multipass_token_path: str
     ) -> dict[str, list[str]]:
         """Collect all Redshift AOVs output filepaths by AOV name."""
@@ -477,11 +488,7 @@ class CollectCinema4DRender(
                 # TODO: File effective path does not work with e.g. Light
                 #  Groups because it will always return the direct AOV path
                 #  from C4D instead of our 'copied' aovs
-                files = files_resolver_fn(
-                    lib_renderproducts.strip_frame_suffix(
-                        aov.file_effective_path
-                    )
-                )
+                files = effective_files_resolver_fn(aov.file_effective_path)
             else:
                 # Make a copy because we may alter it for AOV suffix
                 multipass_token_path_aov = multipass_token_path
